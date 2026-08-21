@@ -19,6 +19,10 @@ FLATPAKS=(
     org.gnome.meld
     org.inkscape.Inkscape
     com.github.johnfactotum.Foliate
+    org.gnome.FileRoller
+    org.gnome.TextEditor
+    org.gnome.baobab
+    org.gnome.Logs
 )
 
 if [ "${#FLATPAKS[@]}" -eq 0 ]; then
