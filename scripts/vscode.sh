@@ -16,4 +16,4 @@ repo_gpgcheck=1
 gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
 
-dnf5 install -y code
+dnf5 install -y --setopt=install_weak_deps=False code
