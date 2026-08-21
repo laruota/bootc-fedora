@@ -3,6 +3,11 @@
 # Run as a normal user (sudo is used internally). Flatpaks land in
 # /var/lib/flatpak (machine state) and update independently of the OS.
 # Edit the FLATPAKS list below to match the apps you want.
+#
+# NOTE: everything installs from the FULL Flathub remote (proprietary apps and
+# codecs included — apps bundle their own codecs in the sandbox). The Fedora
+# flatpak remote is NOT used (it stays configured but inert; remove with
+# `flatpak remote-delete --system fedora` if you don't want it).
 set -euox pipefail
 
 # Add full Flathub (includes proprietary apps like Chrome; the GNOME Software
