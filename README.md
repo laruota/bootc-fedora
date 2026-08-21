@@ -10,14 +10,23 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
 - `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato anche in `/usr/local/bin` nell'immagine)
+- `scripts/bootstrap-python.sh` — bootstrap lib/tool Python via pip `--user` + pipx sulla target (copiato anche in `/usr/local/bin`)
 
 ## Personalizzazioni attuali
 
 - Aggiunti: neovim, zsh, btrfs-assistant, sushi, cheat (+ cheat-community-cheatsheets),
-  dconf-editor, gnome-tweaks, seahorse, zenity, GraphicsMagick, Visual Studio Code
-- Python: pipx + python3-pip nell'immagine. Su immutabile si usa:
+  dconf-editor, gnome-tweaks, seahorse, zenity, GraphicsMagick, Visual Studio Code,
+  gh, git-gui, git-delta, qpdf, mat2, gstreamer1-plugin-openh264, solaar(+udev)
+- **Flatpak sulla target** (~42 app via `bootstrap-flatpaks.sh`): Chrome, Obsidian, GIMP, LibreOffice,
+  Inkscape, Foliate, Meld, Transmission, Flatseal, ExtensionManager, Remmina, Warehouse, Resources,
+  Switcheroo, Decoder, Eyedropper, Gear Lever, Celluloid, Gitte, MailViewer, PDF Arranger, Xournal++,
+  gthumb, virt-viewer, + app GNOME (Calculator, Calendar, Characters, Decibels, FileRoller, FontViewer,
+  Logs, Loupe, Maps, Papers, Snapshot, Solanum, TextEditor, baobab, Apostrophe, Shortwave, Curtail, MediaWriter)
+- **Python**: pipx + python3-pip nell'immagine. Su immutabile si usa:
   `pipx install` per i tool CLI (`~/.local`) e `python3 -m venv` per i progetti
   (python3-pip abilita venv+pip out-of-the-box; non serve python3-venv su Fedora).
+  Le lib degli script (pandas, openpyxl, pdfplumber) si installano
+  sulla target con `sudo /usr/local/bin/bootstrap-python.sh` (pip `--user --break-system-packages`).
 - Install con `install_weak_deps=False`: non vengono trascinate dipendenze deboli
   (nodejs22/npm, gcc, xsel, evince-djvu, snapper, btrfsmaintenance, tree-sitter-cli, ...);
   niente ansible né virt-viewer (usati via toolbox/flatpak).
@@ -39,7 +48,27 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 
 ## Immagine disco per la macchina target
 
-    bcvk to-disk --format=qcow2 localhost/bootc-fedora output/bootc-fedora.qcow2
+    bcvk to-disk --filesystem btrfs --format=qcow2 localhost/bootc-fedora output/bootc-fedora.qcow2
+
+## Pubblicazione su ghcr.io (aggiornamenti automatici)
+
+L'immagine contenitore è pubblica e NON contiene chiavi LUKS (la crittografia è
+creata in locale sulla target all'installazione).
+
+    ./scripts/push.sh <org>            # o a mano: podman push ghcr.io/<org>/bootc-fedora:44
+    podman pull ghcr.io/<org>/bootc-fedora:44   # verifica pull anonimo
+
+## Deploy (macchina target)
+
+Installazione con **disco criptato (LUKS)** — come il tuo portatile:
+- **TPM (nativo, sblocco automatico)**: `bootc install to-disk --block-setup tpm2-luks`
+- **Passphrase (come Workstation)**: ISO Anaconda (`bootc-image-builder --type iso`)
+  e spunta la crittografia durante l'installazione
+
+Poi aggancia l'immagine dal registry:
+
+    bootc switch ghcr.io/<org>/bootc-fedora:44
+    bootc upgrade                # aggiornamenti futuri
 
 ## Note
 
@@ -54,5 +83,9 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
   Flatpak di sistema → `/var/lib/flatpak`, aggiornamenti con `sudo flatpak update`.
 - **malcontent**: il core è richiesto da `gnome-control-center` (non rimovibile);
   è stata rimossa solo l'app standalone `malcontent-control`.
+- **zram**: già incluso nella base (`zram-generator-defaults`) — swap compresso in RAM,
+  nessuna partizione di swap necessaria. Eccezione: l'ibernazione richiederebbe swap su disco.
+- **cups**: tenuto il server (stampante anche USB passa da cupsd); cups-client è già presente.
+- **nmcli**: presente (fa parte di NetworkManager).
 - La pulizia font è sperimentale: verificarne l'effetto in VM prima di fidarsene.
 - Bump di versione Fedora: cambiare il tag `:44` nel `Containerfile`.

@@ -11,18 +11,48 @@ sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub
 
 # >>> EDIT THIS LIST <<<
 FLATPAKS=(
-    com.google.Chrome
-    md.obsidian.Obsidian
-    org.gimp.GIMP
-    org.libreoffice.LibreOffice
-    com.spotify.Client
-    org.gnome.meld
-    org.inkscape.Inkscape
+    com.belmoussaoui.Decoder
+    com.github.finefindus.eyedropper
+    com.github.huluti.Curtail
+    com.github.jeromerobert.pdfarranger
     com.github.johnfactotum.Foliate
+    com.github.tchx84.Flatseal
+    com.github.xournalpp.xournalpp
+    com.google.Chrome
+    com.mattjakeman.ExtensionManager
+    com.transmissionbt.Transmission
+    de.haeckerfelix.Shortwave
+    de.wwwtech.gitte
+    io.github.alescdb.mailviewer
+    io.github.celluloid_player.Celluloid
+    io.github.flattool.Warehouse
+    io.gitlab.adhami3310.Converter
+    it.mijorus.gearlever
+    md.obsidian.Obsidian
+    net.nokyan.Resources
+    org.fedoraproject.MediaWriter
+    org.gimp.GIMP
+    org.gnome.Calculator
+    org.gnome.Calendar
+    org.gnome.Characters
+    org.gnome.Decibels
     org.gnome.FileRoller
+    org.gnome.FontViewer
+    org.gnome.Logs
+    org.gnome.Loupe
+    org.gnome.Maps
+    org.gnome.Papers
+    org.gnome.Snapshot
+    org.gnome.Solanum
     org.gnome.TextEditor
     org.gnome.baobab
-    org.gnome.Logs
+    org.gnome.gitlab.somas.Apostrophe
+    org.gnome.gthumb
+    org.gnome.meld
+    org.inkscape.Inkscape
+    org.libreoffice.LibreOffice
+    org.remmina.Remmina
+    org.virt_manager.virt-viewer
 )
 
 if [ "${#FLATPAKS[@]}" -eq 0 ]; then

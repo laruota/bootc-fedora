@@ -16,17 +16,25 @@ dnf5 install -y --setopt=install_weak_deps=False \
     dconf-editor \
     fd-find \
     fzf \
+    gh \
+    git-delta \
+    git-gui \
     gnome-tweaks \
     GraphicsMagick \
+    gstreamer1-plugin-openh264 \
+    mat2 \
     neovim \
     nmap \
     nnn \
     pipx \
     podman-compose \
     python3-pip \
+    qpdf \
     ripgrep \
     seahorse \
     shellcheck \
+    solaar \
+    solaar-udev \
     stow \
     sushi \
     syncthing \
@@ -35,7 +43,7 @@ dnf5 install -y --setopt=install_weak_deps=False \
     trash-cli \
     tree \
     wl-clipboard \
-        zenity \
+    zenity \
     zoxide \
     zsh
 

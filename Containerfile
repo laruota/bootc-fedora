@@ -28,6 +28,9 @@ RUN --mount=type=cache,destination=/var/cache/libdnf5 \
 # (run it there with sudo; it does NOT run during the image build)
 COPY --chmod=0755 scripts/bootstrap-flatpaks.sh /usr/local/bin/bootstrap-flatpaks.sh
 
+# Same for the Python bootstrap (run it on the target as the user)
+COPY --chmod=0755 scripts/bootstrap-python.sh /usr/local/bin/bootstrap-python.sh
+
 RUN rm -rf /tmp/scripts
 
 # Validate the image
