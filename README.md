@@ -15,6 +15,9 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 
 - Aggiunti: neovim, zsh, btrfs-assistant, sushi, cheat (+ cheat-community-cheatsheets),
   dconf-editor, gnome-tweaks, seahorse, zenity, GraphicsMagick, Visual Studio Code
+- Python: pipx + python3-pip nell'immagine. Su immutabile si usa:
+  `pipx install` per i tool CLI (`~/.local`) e `python3 -m venv` per i progetti
+  (python3-pip abilita venv+pip out-of-the-box; non serve python3-venv su Fedora).
 - Install con `install_weak_deps=False`: non vengono trascinate dipendenze deboli
   (nodejs22/npm, gcc, xsel, evince-djvu, snapper, btrfsmaintenance, tree-sitter-cli, ...);
   niente ansible né virt-viewer (usati via toolbox/flatpak).
