@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Install Visual Studio Code from the official Microsoft RPM repository.
+set -euox pipefail
+
+# Trust the Microsoft signing key
+rpm --import https://packages.microsoft.com/keys/microsoft.asc
+
+# Add the VS Code repository
+cat > /etc/yum.repos.d/vscode.repo <<'EOF'
+[vscode]
+name=Visual Studio Code
+baseurl=https://packages.microsoft.com/yumrepos/vscode
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+
+dnf5 install -y code
