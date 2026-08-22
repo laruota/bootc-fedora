@@ -5,7 +5,8 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 
 ## Contenuto
 
-- `Containerfile` — definizione dell'immagine
+- `Containerfile` — definizione dell'immagine (versione Fedora via `ARG FEDORA_VERSION`, unica fonte)
+- `Makefile` — scorciatoie `make build` / `make lint` / `make push`
 - `scripts/setup.sh` — pacchetti da installare/rimuovere (aggiungi qui le tue utility)
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
@@ -39,7 +40,8 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 
 ## Build
 
-    podman build -t localhost/bootc-fedora:latest .
+    make build                       # usa FEDORA_VERSION=44 di default
+    make build FEDORA_VERSION=43     # override
 
 ## Test in VM
 
@@ -55,7 +57,7 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 L'immagine contenitore è pubblica e NON contiene chiavi LUKS (la crittografia è
 creata in locale sulla target all'installazione).
 
-    ./scripts/push.sh <org>            # o a mano: podman push ghcr.io/<org>/bootc-fedora:44
+    make push ORG=<org>             # oppure: ./scripts/push.sh <org>
     podman pull ghcr.io/<org>/bootc-fedora:44   # verifica pull anonimo
 
 ## Deploy (macchina target)
@@ -88,4 +90,4 @@ Poi aggancia l'immagine dal registry:
 - **cups**: tenuto il server (stampante anche USB passa da cupsd); cups-client è già presente.
 - **nmcli**: presente (fa parte di NetworkManager).
 - La pulizia font è sperimentale: verificarne l'effetto in VM prima di fidarsene.
-- Bump di versione Fedora: cambiare il tag `:44` nel `Containerfile`.
+- Bump di versione Fedora: cambiare `ARG FEDORA_VERSION` nel `Containerfile` (unica fonte; `make build` e `make push` la usano automaticamente).

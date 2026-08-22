@@ -8,7 +8,7 @@
 # codecs included — apps bundle their own codecs in the sandbox). The Fedora
 # flatpak remote is NOT used (it stays configured but inert; remove with
 # `flatpak remote-delete --system fedora` if you don't want it).
-set -euox pipefail
+set -euo pipefail
 
 # Add full Flathub (includes proprietary apps like Chrome; the GNOME Software
 # "third-party" toggle only enables the Fedora-filtered subset).
@@ -31,7 +31,6 @@ FLATPAKS=(
     io.github.alescdb.mailviewer
     io.github.celluloid_player.Celluloid
     io.github.flattool.Warehouse
-    io.gitlab.adhami3310.Converter
     it.mijorus.gearlever
     md.obsidian.Obsidian
     net.nokyan.Resources

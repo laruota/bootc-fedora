@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install/remove packages for the custom bootc image.
 # Runs inside the container build. Extend the lists below to customize.
-set -euox pipefail
+set -euo pipefail
 
 # --- Install packages -------------------------------------------------------
 # install_weak_deps=False: evita che Recommends trascinino pacchetti che

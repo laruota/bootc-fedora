@@ -2,7 +2,7 @@
 # Remove unneeded international fonts / language packs.
 # Keeps the core font set (Latin, GNOME UI, emoji, math/symbols) plus it/en.
 # Validate in a VM before relying on this.
-set -euox pipefail
+set -euo pipefail
 
 # --- 1. Drop language packs we don't use --------------------------------------
 # langpacks-* pulls per-locale fonts, dictionaries and GUI applications.

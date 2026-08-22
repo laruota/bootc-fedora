@@ -3,7 +3,7 @@
 # Run as a normal user. Installs to ~/.local (user site-packages / pipx),
 # so everything survives on the immutable system.
 # Edit the lists below to match the packages you want.
-set -euox pipefail
+set -euo pipefail
 
 # >>> EDIT THIS LIST (libs -> pip install --user) <<<
 # Solo le librerie richieste dagli script Nautilus (vedi playbook ansible).

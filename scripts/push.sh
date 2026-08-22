@@ -2,7 +2,7 @@
 # Pubblica l'immagine bootc su ghcr.io (public, gratis, pull anonimo).
 # Prerequisito: podman login ghcr.io (una volta).
 # Uso: ./scripts/push.sh <org> [tag]     (tag default: 44)
-set -euox pipefail
+set -euo pipefail
 
 ORG="${1:?Uso: ./scripts/push.sh <org> [tag]}"
 TAG="${2:-44}"

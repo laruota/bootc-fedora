@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install Visual Studio Code from the official Microsoft RPM repository.
-set -euox pipefail
+set -euo pipefail
 
 # Trust the Microsoft signing key
 rpm --import https://packages.microsoft.com/keys/microsoft.asc

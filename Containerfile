@@ -1,10 +1,17 @@
 # Custom GNOME bootc image derived from Fedora Silverblue.
-# Build: podman build -t localhost/bootc-fedora:latest .
+# Bump Fedora: change FEDORA_VERSION below (single source of truth).
+# Build: podman build --build-arg FEDORA_VERSION=44 -t localhost/bootc-fedora:latest .
 # Base: official GNOME atomic bootc image (dnf5 + bootc included).
 
-FROM quay.io/fedora/fedora-silverblue:44
+ARG FEDORA_VERSION=44
+FROM quay.io/fedora/fedora-silverblue:${FEDORA_VERSION}
 
 COPY --chmod=0755 scripts/ /tmp/scripts/
+
+# NOTE: the build steps below are kept as separate RUN layers on purpose, so a
+# change to one script (e.g. only fonts.sh) only invalidates that layer during
+# development. Each layer mounts the dnf5 caches to avoid re-downloading metadata
+# and a tmpfs for /var/log to keep the image free of build-time log churn.
 
 # Install / remove packages (see scripts/setup.sh)
 RUN --mount=type=cache,destination=/var/cache/libdnf5 \
