@@ -56,7 +56,7 @@ jobs:
       - name: Build image
         run: |
           podman build \
-            --cache-from "$IMAGE:${{ steps.ver.outputs.version }}" \
+            --cache-from "$IMAGE" \
             --build-arg "FEDORA_VERSION=${{ steps.ver.outputs.version }}" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
             --build-arg "VERSION=${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.short_sha }}" \
