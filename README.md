@@ -1,7 +1,19 @@
 # bootc-fedora
 
 Immagine bootc GNOME personalizzata, basata su `quay.io/fedora/fedora-silverblue:44`.
-Build locale con podman, nessun registry → aggiornamenti manuali.
+Build con podman; l'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora` e gli
+aggiornamenti sulla target avvengono via `bootc upgrade`.
+
+## Flusso di lavoro
+
+1. **Build locale** — `make build` (immagine `localhost/bootc-fedora:latest`).
+2. **Test in VM** — `bcvk ephemeral run-ssh localhost/bootc-fedora`.
+3. **Pubblica su ghcr** — push su GitHub (CI) o `make push ORG=laruota`. Il package
+   va reso **pubblico** per il pull anonimo usato dal deploy.
+4. **Prima installazione sulla target** — genera un'ISO con `bootc-image-builder`
+   (oppure un qcow2 per VM) e installa.
+5. **Aggiornamenti** — sulla target: `bootc switch` al tag desiderato, poi
+   `bootc upgrade`.
 
 ## Contenuto
 
@@ -48,42 +60,49 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
     sudo dnf install bcvk     # richiede KVM/qemu/virtiofsd
     bcvk ephemeral run-ssh localhost/bootc-fedora
 
-## Immagine disco per la macchina target
+Nota: sshd **non** è abilitato di default nell'immagine (per non aprire TCP/22 sulla
+target). Per usare `run-ssh` devi abilitarlo dentro la VM, es.:
 
-    bcvk to-disk --filesystem btrfs --format=qcow2 localhost/bootc-fedora output/bootc-fedora.qcow2
+    bcvk ephemeral run localhost/bootc-fedora   # avvia la VM (console)
+    # nella VM: systemctl enable --now sshd
+    # poi da host: bcvk ssh localhost/bootc-fedora
 
-## Pubblicazione su ghcr.io (aggiornamenti automatici)
 
-L'immagine contenitore è pubblica e NON contiene chiavi LUKS (la crittografia è
-creata in locale sulla target all'installazione).
+## Pubblicazione su ghcr.io
+
+L'immagine contenitore NON contiene chiavi LUKS (la crittografia è creata in locale
+sulla target all'installazione).
 
 La GitHub Action `.github/workflows/build.yml` builda e pubblica su
-`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su
-`master` e su `workflow_dispatch`. Per il pull anonimo (richiesto dal deploy
-con `bootc switch`) imposta il package come **pubblico** su GitHub
-(Packages → bootc-fedora → Settings → Change visibility), altrimenti resta
-privato insieme alla repo.
+`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `master`
+e su `workflow_dispatch`. Il package su GitHub **deve essere pubblico** per il pull
+anonimo usato dal deploy (`bootc switch`): Packages → bootc-fedora → Settings →
+Change visibility. Se resta privato, serve il login (vedi sotto).
 
 Build manuale (stesso risultato della CI):
 
     make push ORG=laruota              # oppure: ./scripts/push.sh laruota
     podman pull ghcr.io/laruota/bootc-fedora:44   # verifica pull anonimo
 
-## Crea l'ISO di installazione
+## Prima installazione sulla target
+
+### ISO (consigliato per il portatile)
 
 `bootc-image-builder` **non** è nei repo Fedora come RPM: si usa il container
-ufficiale (richiede podman su un host Fedora/RHEL).
+ufficiale (richiede podman su un host Fedora/RHEL). L'output finisce in
+`./output/bootc-fedora-<tag>.iso` (ignorato da git tramite `*.iso`).
 
-Genera l'ISO dalla tua immagine su ghcr (l'output finisce in `./output/bootc-fedora-<tag>.iso`,
-ignorato da git tramite `*.iso`). Il builder **non** fa il pull da solo: l'immagine
-va prima scaricata sull'host, così la trova nello storage montato.
+Il builder **non** fa il pull da solo e non ha un rootfs di default (Fedora), quindi:
+- scarica prima l'immagine (`podman pull`), così la trova nello storage montato;
+- passa `--rootfs btrfs`. Il `Containerfile` imposta già btrfs come default
+  (`/usr/lib/bootc/install/50-bootc-fedora.toml`), quindi il flag è opzionale sulle
+  immagini ricostruite; resta qui per quelle già pushate senza il default.
 
-Se il package è **privato**, serve il login in ghcr.io (come root, perché si usa lo
-storage di sistema). User = username GitHub; password = un Personal Access Token con
-scope `read:packages` (non la password di GitHub). In alternativa rendi il package
-**pubblico** su GitHub (Packages → bootc-fedora → Settings) per il pull anonimo.
+Se il package è **privato**, prima del pull fai il login in ghcr.io come root:
+User = username GitHub; password = un Personal Access Token con scope `read:packages`
+(non la password di GitHub). In alternativa rendi il package pubblico (vedi sopra).
 
-    sudo podman login ghcr.io
+    sudo podman login ghcr.io                       # solo se il package è privato
     sudo podman pull ghcr.io/laruota/bootc-fedora:44
     sudo podman run --rm -it --privileged \
       --security-opt label=type:unconfined_t \
@@ -91,16 +110,6 @@ scope `read:packages` (non la password di GitHub). In alternativa rendi il packa
       -v "$PWD/output":/output \
       quay.io/centos-bootc/bootc-image-builder:latest \
       --type iso --rootfs btrfs ghcr.io/laruota/bootc-fedora:44
-
-Nota: il `Containerfile` imposta ormai btrfs come rootfs di default
-(`/usr/lib/bootc/install/50-bootc-fedora.toml`), quindi `--rootfs btrfs` è
-opzionale sulle immagini ricostruite; resta qui per compatibilità con quelle
-pushate prima della modifica.
-
-In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`):
-
-    sudo podman system reset -f
-    sudo podman rm -af
 
 Se l'immagine è solo locale (non pushato), usa `--local`:
 
@@ -111,7 +120,12 @@ Se l'immagine è solo locale (non pushato), usa `--local`:
       quay.io/centos-bootc/bootc-image-builder:latest \
       --type iso --rootfs btrfs --local localhost/bootc-fedora:latest
 
-### Crittografia LUKS con passphrase (tipo Workstation)
+In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`):
+
+    sudo podman system reset -f
+    sudo podman rm -af
+
+#### Crittografia LUKS con passphrase (tipo Workstation)
 
 Il builder installa in modo automatico, quindi per la cifratura serve un kickstart.
 Crea un file `iso.ks` **solo locale** (non committarlo con la passphrase vera):
@@ -119,7 +133,7 @@ Crea un file `iso.ks` **solo locale** (non committarlo con la passphrase vera):
     clearpart --all --initlabel
     part / --fstype btrfs --grow --encrypted --passphrase=<tua-passphrase>
 
-e poi (forma container, come sopra):
+e poi (stessa forma di sopra, con `--kickstart`):
 
     sudo podman run --rm -it --privileged \
       --security-opt label=type:unconfined_t \
@@ -133,23 +147,27 @@ all'avvio chiede la passphrase. In alternativa, per LUKS con sblocco **automatic
 via TPM**: installa senza kickstart, poi abilita LUKS a post-installazione con
 `bootc install to-disk --block-setup tpm2-luks` su un secondo disco.
 
-## Deploy (macchina target)
+### qcow2 per VM (bcvk)
 
-Installazione con **disco criptato (LUKS)** — come il tuo portatile:
-- **TPM (nativo, sblocco automatico)**: `bootc install to-disk --block-setup tpm2-luks`
-- **Passphrase (come Workstation)**: brucia l'ISO sopra e spunta la crittografia
-  durante l'installazione Anaconda (o usa il kickstart indicato)
+    bcvk to-disk --filesystem btrfs --format=qcow2 localhost/bootc-fedora output/bootc-fedora.qcow2
 
-Poi aggancia l'immagine dal registry:
+## Aggiornamenti sulla target
+
+Per un sistema già installato (da ISO o qcow2), aggancia/aggiorna l'immagine dal registry:
 
     bootc switch ghcr.io/laruota/bootc-fedora:44
     bootc upgrade                # aggiornamenti futuri
 
+Installazione con **disco criptato (LUKS)**:
+- **TPM (nativo, sblocco automatico)**: `bootc install to-disk --block-setup tpm2-luks`
+- **Passphrase (come Workstation)**: usa l'ISO con kickstart precedente, oppure spunta
+  la crittografia durante l'installazione Anaconda.
+
 ## Note
 
-- Nessun registry → la target non riceve aggiornamenti automatici: per aggiornare,
-  rebuild + re-flash dell'immagine. Se in futuro servirà `bootc upgrade`, basterà
-  pubblicare l'immagine su ghcr.io/quay.io e fare `bootc switch`.
+- L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `master`
+  (o `workflow_dispatch`) ricostruisce e pubblica una nuova immagine; la target la
+  riceve con `bootc upgrade` dopo `bootc switch`.
 - **App GNOME**: papers, loupe, gnome-calendar, ecc. NON sono nell'immagine — sono
   flatpak installati sulla target via GNOME Software. Al primo avvio viene aggiunto
   il remote `fedora`; il remote **Flathub completo** (Chrome e app proprietarie) va

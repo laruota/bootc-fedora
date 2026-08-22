@@ -95,17 +95,15 @@ fi
 sed -i 's|^SHELL=.*|SHELL=/bin/zsh|' /etc/default/useradd
 grep -q '^SHELL=/bin/zsh' /etc/default/useradd || echo 'SHELL=/bin/zsh' >> /etc/default/useradd
 
-# --- Enable sshd (TCP:22) -----------------------------------------------------
-# The Silverblue base leaves sshd.service disabled (only the systemd-ssh-generator
-# vsock/unix listeners are active). bcvk connects to its VMs over TCP port 22,
-# so enabling sshd makes the image testable with bcvk (and SSH-able on the
-# target machine). Host keys are generated automatically at first boot.
-systemctl enable sshd.service
+# --- sshd NOT enabled on purpose ---------------------------------------------
+# The base leaves sshd.service disabled (only the systemd-ssh-generator vsock/unix
+# listeners are active). We do NOT enable it in the image, otherwise TCP/22 would
+# be open by default on the deployed (immutable) target. Enable it manually on the
+# target if needed (`systemctl enable --now sshd`). For bcvk VM testing, enable it
+# inside the VM (see README "Test in VM").
 
-# --- Remove third-party repo files we don't want ------------------------------
-# These come from fedora-workstation-repositories. They are disabled by default,
-# but on the immutable deployed system /etc is read-only, so they would never be
-# (re)enabled anyway. Removing them leaves no trace on the target.
+# Remove disabled third-party repo files shipped by fedora-workstation-repositories
+# (required by fedora-release-silverblue). Chrome is a Flatpak on the target, not rpm.
 # Kept: fedora, fedora-updates, fedora-cisco-openh264, vscode.
 rm -f /etc/yum.repos.d/rpmfusion-nonfree-*.repo \
     /etc/yum.repos.d/_copr:*PyCharm.repo \
