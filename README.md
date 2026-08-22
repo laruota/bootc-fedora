@@ -90,7 +90,12 @@ scope `read:packages` (non la password di GitHub). In alternativa rendi il packa
       -v /var/lib/containers/storage:/var/lib/containers/storage \
       -v "$PWD/output":/output \
       quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso ghcr.io/laruota/bootc-fedora:44
+      --type iso --rootfs btrfs ghcr.io/laruota/bootc-fedora:44
+
+Nota: il `Containerfile` imposta ormai btrfs come rootfs di default
+(`/usr/lib/bootc/install/50-bootc-fedora.toml`), quindi `--rootfs btrfs` è
+opzionale sulle immagini ricostruite; resta qui per compatibilità con quelle
+pushate prima della modifica.
 
 In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`):
 
@@ -104,7 +109,7 @@ Se l'immagine è solo locale (non pushato), usa `--local`:
       -v /var/lib/containers/storage:/var/lib/containers/storage \
       -v "$PWD/output":/output \
       quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --local localhost/bootc-fedora:latest
+      --type iso --rootfs btrfs --local localhost/bootc-fedora:latest
 
 ### Crittografia LUKS con passphrase (tipo Workstation)
 
@@ -121,7 +126,7 @@ e poi (forma container, come sopra):
       -v /var/lib/containers/storage:/var/lib/containers/storage \
       -v "$PWD/output":/output \
       quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --kickstart iso.ks ghcr.io/laruota/bootc-fedora:44
+      --type iso --rootfs btrfs --kickstart iso.ks ghcr.io/laruota/bootc-fedora:44
 
 L'ISO installa con la root cifrata (`/boot` resta non cifrato, come su Workstation);
 all'avvio chiede la passphrase. In alternativa, per LUKS con sblocco **automatico

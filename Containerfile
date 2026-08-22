@@ -40,5 +40,13 @@ COPY --chmod=0755 scripts/bootstrap-python.sh /usr/local/bin/bootstrap-python.sh
 
 RUN rm -rf /tmp/scripts
 
+# Default root filesystem type for bootc install / image-builder.
+# Fedora (Silverblue base) ships no default, so set btrfs explicitly:
+# this avoids needing `--rootfs btrfs` on bootc-image-builder and
+# `--filesystem btrfs` on `bootc install to-disk`.
+RUN mkdir -p /usr/lib/bootc/install && \
+    printf '[install.filesystem.root]\ntype = "btrfs"\n' \
+    > /usr/lib/bootc/install/50-bootc-fedora.toml
+
 # Validate the image
 RUN bootc container lint
