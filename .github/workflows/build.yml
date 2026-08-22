@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      fedora_version:
+        description: 'Fedora version to build'
+        required: true
+        default: '44'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FEDORA_VERSION: ${{ github.event.inputs.fedora_version || '44' }}
+  IMAGE: ghcr.io/${{ github.repository_owner }}/bootc-fedora
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build image
+        run: |
+          podman build \
+            --build-arg "FEDORA_VERSION=$FEDORA_VERSION" \
+            -t "$IMAGE:$FEDORA_VERSION" \
+            -t "$IMAGE:latest" .
+
+      - name: Push image
+        run: |
+          podman push "$IMAGE:$FEDORA_VERSION"
+          podman push "$IMAGE:latest"

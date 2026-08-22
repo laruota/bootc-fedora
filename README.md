@@ -57,8 +57,17 @@ Build locale con podman, nessun registry → aggiornamenti manuali.
 L'immagine contenitore è pubblica e NON contiene chiavi LUKS (la crittografia è
 creata in locale sulla target all'installazione).
 
-    make push ORG=<org>             # oppure: ./scripts/push.sh <org>
-    podman pull ghcr.io/<org>/bootc-fedora:44   # verifica pull anonimo
+La GitHub Action `.github/workflows/build.yml` builda e pubblica su
+`ghcr.io/<owner>/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su
+`master` e su `workflow_dispatch`. Per il pull anonimo (richiesto dal deploy
+con `bootc switch`) imposta il package come **pubblico** su GitHub
+(Packages → bootc-fedora → Settings → Change visibility), altrimenti resta
+privato insieme alla repo.
+
+Build manuale (stesso risultato della CI):
+
+    make push ORG=<owner>              # oppure: ./scripts/push.sh <owner>
+    podman pull ghcr.io/<owner>/bootc-fedora:44   # verifica pull anonimo
 
 ## Deploy (macchina target)
 
