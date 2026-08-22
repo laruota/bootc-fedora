@@ -58,7 +58,7 @@ L'immagine contenitore è pubblica e NON contiene chiavi LUKS (la crittografia �
 creata in locale sulla target all'installazione).
 
 La GitHub Action `.github/workflows/build.yml` builda e pubblica su
-`ghcr.io/<owner>/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su
+`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su
 `master` e su `workflow_dispatch`. Per il pull anonimo (richiesto dal deploy
 con `bootc switch`) imposta il package come **pubblico** su GitHub
 (Packages → bootc-fedora → Settings → Change visibility), altrimenti resta
@@ -66,19 +66,78 @@ privato insieme alla repo.
 
 Build manuale (stesso risultato della CI):
 
-    make push ORG=<owner>              # oppure: ./scripts/push.sh <owner>
-    podman pull ghcr.io/<owner>/bootc-fedora:44   # verifica pull anonimo
+    make push ORG=laruota              # oppure: ./scripts/push.sh laruota
+    podman pull ghcr.io/laruota/bootc-fedora:44   # verifica pull anonimo
+
+## Crea l'ISO di installazione
+
+`bootc-image-builder` **non** è nei repo Fedora come RPM: si usa il container
+ufficiale (richiede podman su un host Fedora/RHEL).
+
+Genera l'ISO dalla tua immagine su ghcr (l'output finisce in `./output/bootc-fedora-<tag>.iso`,
+ignorato da git tramite `*.iso`). Il builder **non** fa il pull da solo: l'immagine
+va prima scaricata sull'host, così la trova nello storage montato.
+
+Se il package è **privato**, serve il login in ghcr.io (come root, perché si usa lo
+storage di sistema). User = username GitHub; password = un Personal Access Token con
+scope `read:packages` (non la password di GitHub). In alternativa rendi il package
+**pubblico** su GitHub (Packages → bootc-fedora → Settings) per il pull anonimo.
+
+    sudo podman login ghcr.io
+    sudo podman pull ghcr.io/laruota/bootc-fedora:44
+    sudo podman run --rm -it --privileged \
+      --security-opt label=type:unconfined_t \
+      -v /var/lib/containers/storage:/var/lib/containers/storage \
+      -v "$PWD/output":/output \
+      quay.io/centos-bootc/bootc-image-builder:latest \
+      --type iso ghcr.io/laruota/bootc-fedora:44
+
+In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`):
+
+    sudo podman system reset -f
+    sudo podman rm -af
+
+Se l'immagine è solo locale (non pushato), usa `--local`:
+
+    sudo podman run --rm -it --privileged \
+      --security-opt label=type:unconfined_t \
+      -v /var/lib/containers/storage:/var/lib/containers/storage \
+      -v "$PWD/output":/output \
+      quay.io/centos-bootc/bootc-image-builder:latest \
+      --type iso --local localhost/bootc-fedora:latest
+
+### Crittografia LUKS con passphrase (tipo Workstation)
+
+Il builder installa in modo automatico, quindi per la cifratura serve un kickstart.
+Crea un file `iso.ks` **solo locale** (non committarlo con la passphrase vera):
+
+    clearpart --all --initlabel
+    part / --fstype btrfs --grow --encrypted --passphrase=<tua-passphrase>
+
+e poi (forma container, come sopra):
+
+    sudo podman run --rm -it --privileged \
+      --security-opt label=type:unconfined_t \
+      -v /var/lib/containers/storage:/var/lib/containers/storage \
+      -v "$PWD/output":/output \
+      quay.io/centos-bootc/bootc-image-builder:latest \
+      --type iso --kickstart iso.ks ghcr.io/laruota/bootc-fedora:44
+
+L'ISO installa con la root cifrata (`/boot` resta non cifrato, come su Workstation);
+all'avvio chiede la passphrase. In alternativa, per LUKS con sblocco **automatico
+via TPM**: installa senza kickstart, poi abilita LUKS a post-installazione con
+`bootc install to-disk --block-setup tpm2-luks` su un secondo disco.
 
 ## Deploy (macchina target)
 
 Installazione con **disco criptato (LUKS)** — come il tuo portatile:
 - **TPM (nativo, sblocco automatico)**: `bootc install to-disk --block-setup tpm2-luks`
-- **Passphrase (come Workstation)**: ISO Anaconda (`bootc-image-builder --type iso`)
-  e spunta la crittografia durante l'installazione
+- **Passphrase (come Workstation)**: brucia l'ISO sopra e spunta la crittografia
+  durante l'installazione Anaconda (o usa il kickstart indicato)
 
 Poi aggancia l'immagine dal registry:
 
-    bootc switch ghcr.io/<org>/bootc-fedora:44
+    bootc switch ghcr.io/laruota/bootc-fedora:44
     bootc upgrade                # aggiornamenti futuri
 
 ## Note
