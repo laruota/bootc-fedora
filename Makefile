@@ -3,26 +3,27 @@
 #   make build FEDORA_VERSION=43
 #   make push ORG=my-org
 
-FEDORA_VERSION ?= 44
+# Single source of truth for the Fedora version: ARG FEDORA_VERSION in the
+# Containerfile (override with `make build FEDORA_VERSION=X` for one-offs).
+FEDORA_VERSION ?= $(shell sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)
 IMAGE          ?= localhost/bootc-fedora
 TAG            ?= latest
 ORG            ?=
-REMOTE_TAG     ?= ghcr.io/$(ORG)/bootc-fedora:$(FEDORA_VERSION)
 
 .PHONY: build lint push
 
 # Build the image. `bootc container lint` runs at the end of the Containerfile,
 # so a successful build already means the image is validated.
 build:
-	podman build --build-arg FEDORA_VERSION=$(FEDORA_VERSION) -t $(IMAGE):$(TAG) .
+	podman build --build-arg FEDORA_VERSION=$(FEDORA_VERSION) \
+	    --build-arg "SOURCE_COMMIT=$$(git rev-parse HEAD 2>/dev/null)" \
+	    -t $(IMAGE):$(TAG) .
 
 # Explicit re-lint (handy after editing the Containerfile without a full rebuild).
 lint:
 	podman run --rm $(IMAGE):$(TAG) bootc container lint
 
-# Tag and push to ghcr.io. Requires `podman login ghcr.io` once.
+# Tag and push to ghcr.io via scripts/push.sh. Requires `podman login ghcr.io` once.
 push:
 	@test -n "$(ORG)" || { echo "usage: make push ORG=<your-org>"; exit 1; }
-	podman tag $(IMAGE):$(TAG) $(REMOTE_TAG)
-	podman push $(REMOTE_TAG)
-	@echo "OK: $(REMOTE_TAG)"
+	./scripts/push.sh $(ORG) $(FEDORA_VERSION)

@@ -28,6 +28,7 @@ FLATPAKS=(
     com.transmissionbt.Transmission
     de.haeckerfelix.Shortwave
     de.wwwtech.gitte
+    io.gitlab.adhami3310.Converter
     io.github.alescdb.mailviewer
     io.github.celluloid_player.Celluloid
     io.github.flattool.Warehouse
@@ -41,7 +42,7 @@ FLATPAKS=(
     org.gnome.Characters
     org.gnome.Decibels
     org.gnome.FileRoller
-    org.gnome.FontViewer
+    org.gnome.font-viewer
     org.gnome.Logs
     org.gnome.Loupe
     org.gnome.Maps
@@ -51,7 +52,7 @@ FLATPAKS=(
     org.gnome.TextEditor
     org.gnome.baobab
     org.gnome.gitlab.somas.Apostrophe
-    org.gnome.gthumb
+    org.gnome.gThumb
     org.gnome.meld
     org.inkscape.Inkscape
     org.libreoffice.LibreOffice
@@ -64,4 +65,20 @@ if [ "${#FLATPAKS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-sudo flatpak install --system -y flathub "${FLATPAKS[@]}"
+# Install one app at a time: a single failure (ID errato, app rimossa da
+# Flathub, ...) non deve bloccare tutte le altre. --or-update rende lo script
+# ri-eseguibile (installa o aggiorna).
+FAILED=()
+for app in "${FLATPAKS[@]}"; do
+    if sudo flatpak install --system -y --or-update flathub "$app"; then
+        echo "OK: $app"
+    else
+        echo "FALLITO: $app" >&2
+        FAILED+=("$app")
+    fi
+done
+
+if [ "${#FAILED[@]}" -gt 0 ]; then
+    echo "Installazione fallita per ${#FAILED[@]} app: ${FAILED[*]}" >&2
+    exit 1
+fi

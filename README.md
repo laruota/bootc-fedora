@@ -182,3 +182,7 @@ Installazione con **disco criptato (LUKS)**:
 - **nmcli**: presente (fa parte di NetworkManager).
 - La pulizia font è sperimentale: verificarne l'effetto in VM prima di fidarsene.
 - Bump di versione Fedora: cambiare `ARG FEDORA_VERSION` nel `Containerfile` (unica fonte; `make build` e `make push` la usano automaticamente).
+
+## Licenza
+
+GPL-3.0 — vedi [LICENSE](LICENSE).

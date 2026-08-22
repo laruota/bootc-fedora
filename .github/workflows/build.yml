@@ -6,12 +6,14 @@ on:
     paths-ignore:
       - 'README.md'
       - '.gitignore'
+      - 'LICENSE'
+      - 'Makefile'
+      - 'scripts/push.sh'
   workflow_dispatch:
     inputs:
       fedora_version:
-        description: 'Fedora version to build'
-        required: true
-        default: '44'
+        description: 'Fedora version to build (empty = ARG del Containerfile)'
+        required: false
 
 permissions:
   contents: read
@@ -22,7 +24,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FEDORA_VERSION: ${{ github.event.inputs.fedora_version || '44' }}
   IMAGE: ghcr.io/${{ github.repository_owner }}/bootc-fedora
 
 jobs:
@@ -31,22 +32,38 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install podman
+      # podman è già preinstallato sui runner ubuntu-latest.
+      # Unica fonte della versione: ARG FEDORA_VERSION nel Containerfile.
+      - name: Resolve Fedora version
+        id: ver
         run: |
-          sudo apt-get update
-          sudo apt-get install -y podman
+          V="${{ github.event.inputs.fedora_version }}"
+          [ -n "$V" ] || V="$(sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # L'immagine precedente fa da cache dei layer (--cache-from): le RUN che
+      # non sono cambiate non vengono rieseguite. Al primo giro (o se privata)
+      # il pull fallisce e si prosegue senza cache.
+      - name: Pull previous image (layer cache)
+        run: podman pull "$IMAGE:${{ steps.ver.outputs.version }}" || echo "nessuna cache disponibile, build completa"
 
       - name: Build image
         run: |
           podman build \
-            --build-arg "FEDORA_VERSION=$FEDORA_VERSION" \
-            -t "$IMAGE:$FEDORA_VERSION" \
+            --cache-from "$IMAGE:${{ steps.ver.outputs.version }}" \
+            --build-arg "FEDORA_VERSION=${{ steps.ver.outputs.version }}" \
+            --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
+            --build-arg "VERSION=${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.short_sha }}" \
+            -t "$IMAGE:${{ steps.ver.outputs.version }}" \
             -t "$IMAGE:latest" .
 
       - name: Push image
         run: |
-          podman push "$IMAGE:$FEDORA_VERSION"
+          podman push "$IMAGE:${{ steps.ver.outputs.version }}"
           podman push "$IMAGE:latest"
