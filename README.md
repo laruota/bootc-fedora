@@ -18,12 +18,12 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 ## Contenuto
 
 - `Containerfile` — definizione dell'immagine (versione Fedora via `ARG FEDORA_VERSION`, unica fonte)
-- `Makefile` — scorciatoie `make build` / `make lint` / `make push`
+- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make push`
 - `scripts/setup.sh` — pacchetti da installare/rimuovere (aggiungi qui le tue utility)
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
-- `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato anche in `/usr/local/bin` nell'immagine)
-- `scripts/bootstrap-python.sh` — bootstrap lib/tool Python via pip `--user` + pipx sulla target (copiato anche in `/usr/local/bin`)
+- `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato in `/usr/libexec/bootc-fedora` nell'immagine)
+- `scripts/bootstrap-python.sh` — bootstrap di librerie Python nel profilo dell'utente via pip `--user` (copiato in `/usr/libexec/bootc-fedora`)
 
 ## Personalizzazioni attuali
 
@@ -39,7 +39,8 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
   `pipx install` per i tool CLI (`~/.local`) e `python3 -m venv` per i progetti
   (python3-pip abilita venv+pip out-of-the-box; non serve python3-venv su Fedora).
   Le lib degli script (pandas, openpyxl, pdfplumber) si installano
-  sulla target con `sudo /usr/local/bin/bootstrap-python.sh` (pip `--user --break-system-packages`).
+   sulla target con `/usr/libexec/bootc-fedora/bootstrap-python.sh` eseguito dall'utente che
+   usa gli script (pip `--user --break-system-packages`; non usare `sudo`).
 - Install con `install_weak_deps=False`: non vengono trascinate dipendenze deboli
   (nodejs22/npm, gcc, xsel, evince-djvu, snapper, btrfsmaintenance, tree-sitter-cli, ...);
   niente ansible né virt-viewer (usati via toolbox/flatpak).
@@ -54,6 +55,7 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
     make build                       # usa FEDORA_VERSION=44 di default
     make build FEDORA_VERSION=43     # override
+    make shellcheck                  # lint degli script shell
 
 ## Test in VM
 
@@ -75,7 +77,8 @@ sulla target all'installazione).
 
 La GitHub Action `.github/workflows/build.yml` builda e pubblica su
 `ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `master`
-e su `workflow_dispatch`. Il package su GitHub **deve essere pubblico** per il pull
+e su `workflow_dispatch`. Entrambi sono tag **mutabili**: rappresentano il canale
+Fedora corrente, non una release immutabile. Il package su GitHub **deve essere pubblico** per il pull
 anonimo usato dal deploy (`bootc switch`): Packages → bootc-fedora → Settings →
 Change visibility. Se resta privato, serve il login (vedi sotto).
 
@@ -120,18 +123,24 @@ Se l'immagine è solo locale (non pushato), usa `--local`:
       quay.io/centos-bootc/bootc-image-builder:latest \
       --type iso --rootfs btrfs --local localhost/bootc-fedora:latest
 
-In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`):
+In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`), prima
+identifica e rimuovi soltanto il container del builder coinvolto:
 
-    sudo podman system reset -f
-    sudo podman rm -af
+    sudo podman ps -a
+    sudo podman rm -f <id-o-nome-del-builder>
+
+`sudo podman system reset -f` rimuove l'intero storage Podman (immagini, container e
+volumi inclusi) e non va usato come recovery ordinario per questo progetto.
 
 #### Crittografia LUKS con passphrase (tipo Workstation)
 
 Il builder installa in modo automatico, quindi per la cifratura serve un kickstart.
-Crea un file `iso.ks` **solo locale** (non committarlo con la passphrase vera):
+Crea un file `iso.ks` **solo locale** (non committarlo con la passphrase vera). Sostituisci
+`sda` con il disco destinato all'installazione: i comandi seguenti cancellano solo quel disco.
 
-    clearpart --all --initlabel
-    part / --fstype btrfs --grow --encrypted --passphrase=<tua-passphrase>
+    ignoredisk --only-use=sda
+    clearpart --drives=sda --all --initlabel
+    part / --fstype btrfs --grow --encrypted --passphrase=<tua-passphrase> --ondisk=sda
 
 e poi (stessa forma di sopra, con `--kickstart`):
 
@@ -169,10 +178,10 @@ Installazione con **disco criptato (LUKS)**:
   (o `workflow_dispatch`) ricostruisce e pubblica una nuova immagine; la target la
   riceve con `bootc upgrade` dopo `bootc switch`.
 - **App GNOME**: papers, loupe, gnome-calendar, ecc. NON sono nell'immagine — sono
-  flatpak installati sulla target via GNOME Software. Al primo avvio viene aggiunto
-  il remote `fedora`; il remote **Flathub completo** (Chrome e app proprietarie) va
-  aggiunto a mano una volta sulla target:
-  `sudo /usr/local/bin/bootstrap-flatpaks.sh` (o `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`)
+  flatpak installati sulla target via GNOME Software. `bootstrap-flatpaks.sh` aggiunge
+  e verifica il remote **Flathub completo** (Chrome e app proprietarie); non aggiunge
+  il remote `fedora`, che puo essere gia presente nella base:
+  `sudo /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh` (o `flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo`)
   Flatpak di sistema → `/var/lib/flatpak`, aggiornamenti con `sudo flatpak update`.
 - **malcontent**: il core è richiesto da `gnome-control-center` (non rimovibile);
   è stata rimossa solo l'app standalone `malcontent-control`.

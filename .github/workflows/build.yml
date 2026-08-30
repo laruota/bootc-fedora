@@ -32,15 +32,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: ShellCheck scripts
+        run: make shellcheck
+
       # podman è già preinstallato sui runner ubuntu-latest.
       # Unica fonte della versione: ARG FEDORA_VERSION nel Containerfile.
       - name: Resolve Fedora version
         id: ver
+        env:
+          REQUESTED_FEDORA_VERSION: ${{ inputs.fedora_version }}
         run: |
-          V="${{ github.event.inputs.fedora_version }}"
+          V="${REQUESTED_FEDORA_VERSION:-}"
+          if [ -n "$V" ] && ! [[ "$V" =~ ^[0-9]+$ ]]; then
+            echo "fedora_version deve essere un intero positivo" >&2
+            exit 1
+          fi
           [ -n "$V" ] || V="$(sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)"
+          [[ "$V" =~ ^[0-9]+$ ]] || { echo "ARG FEDORA_VERSION non valido" >&2; exit 1; }
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ghcr.io
         env:
@@ -56,12 +65,15 @@ jobs:
       - name: Build image
         run: |
           podman build \
-            --cache-from "$IMAGE" \
+            --cache-from "$IMAGE:${{ steps.ver.outputs.version }}" \
             --build-arg "FEDORA_VERSION=${{ steps.ver.outputs.version }}" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
-            --build-arg "VERSION=${{ steps.ver.outputs.version }}-${{ steps.ver.outputs.short_sha }}" \
+            --build-arg "VERSION=${{ steps.ver.outputs.version }}" \
             -t "$IMAGE:${{ steps.ver.outputs.version }}" \
             -t "$IMAGE:latest" .
+
+      - name: Smoke test image
+        run: make smoke IMAGE="$IMAGE" TAG="${{ steps.ver.outputs.version }}"
 
       - name: Push image
         run: |

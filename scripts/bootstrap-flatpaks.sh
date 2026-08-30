@@ -11,8 +11,16 @@
 set -euo pipefail
 
 # Add full Flathub (includes proprietary apps like Chrome; the GNOME Software
-# "third-party" toggle only enables the Fedora-filtered subset).
-sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+# "third-party" toggle only enables the Fedora-filtered subset). Do not trust a
+# pre-existing remote with the same name but a different URL.
+FLATHUB_URL="https://flathub.org/repo/flathub.flatpakrepo"
+REMOTE_URL="$(sudo flatpak remotes --system --columns=name,url | awk '$1 == "flathub" { print $2; exit }')"
+if [ -z "$REMOTE_URL" ]; then
+    sudo flatpak remote-add flathub "$FLATHUB_URL"
+elif [ "$REMOTE_URL" != "$FLATHUB_URL" ]; then
+    echo "Il remote di sistema flathub non punta a $FLATHUB_URL." >&2
+    exit 1
+fi
 
 # >>> EDIT THIS LIST <<<
 FLATPAKS=(

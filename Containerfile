@@ -46,28 +46,20 @@ RUN --mount=type=bind,source=scripts,target=/tmp/scripts \
     --mount=type=tmpfs,destination=/var/log \
     bash /tmp/scripts/fonts.sh
 
-# Keep the flatpak bootstrap script available on the target machine
-# (run it there with sudo; it does NOT run during the image build)
-COPY --chmod=0755 scripts/bootstrap-flatpaks.sh /usr/local/bin/bootstrap-flatpaks.sh
+# Keep bootstrap scripts in the immutable image. /usr/local maps to /var/usrlocal
+# on Fedora Atomic, so it is intentionally not used for versioned image content.
+COPY --chmod=0755 scripts/bootstrap-flatpaks.sh scripts/bootstrap-python.sh /usr/libexec/bootc-fedora/
 
-# Same for the Python bootstrap (run it on the target as the user)
-COPY --chmod=0755 scripts/bootstrap-python.sh /usr/local/bin/bootstrap-python.sh
-
-# Host locale/timezone and default editor. NOTE: OCI ENV vars do NOT reach
-# sessions of a bootc-deployed host (they are container-runtime metadata):
-# anything that must affect the installed OS has to be written to the fs.
-RUN ln -sf /usr/share/zoneinfo/Europe/Rome /etc/localtime && \
-    printf 'LANG=it_IT.UTF-8\n' > /etc/locale.conf && \
-    printf '#!/bin/sh\nexport EDITOR=nvim VISUAL=nvim\n' > /etc/profile.d/50-editor.sh && \
-    chmod 0644 /etc/profile.d/50-editor.sh
-
-# Default root filesystem type for bootc install / image-builder.
-# Fedora (Silverblue base) ships no default, so set btrfs explicitly:
-# this avoids needing `--rootfs btrfs` on bootc-image-builder and
-# `--filesystem btrfs` on `bootc install to-disk`.
+# Host locale/timezone, default editor and root filesystem type. OCI ENV vars do
+# not reach bootc-deployed sessions, so host settings must be written to the fs.
 RUN mkdir -p /usr/lib/bootc/install && \
     printf '[install.filesystem.root]\ntype = "btrfs"\n' \
-    > /usr/lib/bootc/install/50-bootc-fedora.toml
+    > /usr/lib/bootc/install/50-bootc-fedora.toml && \
+    ln -sf /usr/share/zoneinfo/Europe/Rome /etc/localtime && \
+    printf 'LANG=it_IT.UTF-8\n' > /etc/locale.conf && \
+    printf '#!/bin/sh\nexport EDITOR=nvim VISUAL=nvim\n' > /etc/profile.d/50-editor.sh && \
+    chmod 0644 /etc/profile.d/50-editor.sh && \
+    rm -f /var/cache/ldconfig/aux-cache
 
 # Validate the image
 RUN bootc container lint

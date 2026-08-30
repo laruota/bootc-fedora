@@ -9,8 +9,9 @@ FEDORA_VERSION ?= $(shell sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)
 IMAGE          ?= localhost/bootc-fedora
 TAG            ?= latest
 ORG            ?=
+SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck-alpine:v0.11.0
 
-.PHONY: build lint push
+.PHONY: build lint shellcheck smoke push
 
 # Build the image. `bootc container lint` runs at the end of the Containerfile,
 # so a successful build already means the image is validated.
@@ -23,7 +24,15 @@ build:
 lint:
 	podman run --rm $(IMAGE):$(TAG) bootc container lint
 
+# Lint scripts without adding ShellCheck to the deployed operating system.
+shellcheck:
+	podman run --rm -v "$(CURDIR):/src:ro,Z" -w /src $(SHELLCHECK_IMAGE) shellcheck -s bash scripts/*.sh
+
+# Check the custom operating-system content without requiring a VM boot.
+smoke:
+	podman run --rm $(IMAGE):$(TAG) bash -ceu 'bootc container lint; test -x /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh; test -x /usr/libexec/bootc-fedora/bootstrap-python.sh; test -f /usr/lib/bootc/install/50-bootc-fedora.toml; grep -Fxq "type = \"btrfs\"" /usr/lib/bootc/install/50-bootc-fedora.toml; readlink /etc/localtime | grep -Fxq /usr/share/zoneinfo/Europe/Rome; grep -Fxq LANG=it_IT.UTF-8 /etc/locale.conf; command -v code; rpm -q google-noto-sans-vf-fonts google-noto-serif-vf-fonts google-noto-sans-mono-vf-fonts google-noto-color-emoji-fonts; if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
+
 # Tag and push to ghcr.io via scripts/push.sh. Requires `podman login ghcr.io` once.
 push:
 	@test -n "$(ORG)" || { echo "usage: make push ORG=<your-org>"; exit 1; }
-	./scripts/push.sh $(ORG) $(FEDORA_VERSION)
+	./scripts/push.sh $(ORG) $(FEDORA_VERSION) $(IMAGE) $(TAG)

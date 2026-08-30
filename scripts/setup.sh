@@ -13,6 +13,7 @@ dnf5 install -y --setopt=install_weak_deps=False \
     btrfs-assistant \
     cheat \
     cheat-community-cheatsheets \
+    chezmoi \
     dconf-editor \
     fd-find \
     fzf \
@@ -32,10 +33,8 @@ dnf5 install -y --setopt=install_weak_deps=False \
     qpdf \
     ripgrep \
     seahorse \
-    shellcheck \
     solaar \
     solaar-udev \
-    stow \
     sushi \
     syncthing \
     tldr \
@@ -48,8 +47,16 @@ dnf5 install -y --setopt=install_weak_deps=False \
     zsh
 
 # --- Remove packages --------------------------------------------------------
-# Replace vim with neovim (vim may not be installed on Silverblue at all)
-dnf5 remove -y vim-minimal vim-enhanced || true
+# Replace vim with neovim only when one of its packages is present.
+VIM_PACKAGES=()
+for p in vim-minimal vim-enhanced; do
+    if dnf5 repoquery --installed --queryformat '%{name}\n' "$p" 2>/dev/null | grep -Fxq "$p"; then
+        VIM_PACKAGES+=("$p")
+    fi
+done
+if [ "${#VIM_PACKAGES[@]}" -gt 0 ]; then
+    dnf5 remove -y "${VIM_PACKAGES[@]}"
+fi
 
 # Unneeded packages (remove only the ones actually present):
 #   - GNOME apps / input engines / NM plugins / Exchange support
@@ -60,24 +67,25 @@ dnf5 remove -y vim-minimal vim-enhanced || true
 #   - xsel: orfano (xclip rimosso anche lui, nessuno dei due serve)
 #   - gcc/glibc-devel/kernel-headers/libxcrypt-devel: compile toolchain,
 #     unused on an immutable system (use toolbox/distrobox to compile)
-REMOVE="gnome-tour \
-    ibus-anthy ibus-hangul ibus-m17n ibus-typing-booster ibus-libpinyin \
-    NetworkManager-adsl evolution-ews evolution-ews-core evolution-ews-langpacks \
-    gnome-shell-extension-background-logo \
-    malcontent-control \
-    nodejs22 \
-    xsel \
-    gcc glibc-devel kernel-headers libxcrypt-devel"
+REMOVE=(
+    gnome-tour
+    ibus-anthy ibus-hangul ibus-m17n ibus-typing-booster ibus-libpinyin
+    NetworkManager-adsl evolution-ews evolution-ews-core evolution-ews-langpacks
+    gnome-shell-extension-background-logo
+    malcontent-control
+    nodejs22
+    xsel
+    gcc glibc-devel kernel-headers libxcrypt-devel
+)
 # NOTE: perl stays — stow (dotfiles) is a Perl program and needs it.
-INSTALLED=""
-for p in $REMOVE; do
-    if [ -n "$(dnf5 repoquery --installed "$p" 2>/dev/null)" ]; then
-        INSTALLED="$INSTALLED $p"
+INSTALLED=()
+for p in "${REMOVE[@]}"; do
+    if dnf5 repoquery --installed --queryformat '%{name}\n' "$p" 2>/dev/null | grep -Fxq "$p"; then
+        INSTALLED+=("$p")
     fi
 done
-if [ -n "$INSTALLED" ]; then
-    # shellcheck disable=SC2086
-    dnf5 remove -y $INSTALLED
+if [ "${#INSTALLED[@]}" -gt 0 ]; then
+    dnf5 remove -y "${INSTALLED[@]}"
 fi
 
 # Point editor/vi alternatives to neovim when provided
