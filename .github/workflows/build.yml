@@ -56,16 +56,16 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # L'immagine precedente fa da cache dei layer (--cache-from): le RUN che
-      # non sono cambiate non vengono rieseguite. Al primo giro (o se privata)
-      # il pull fallisce e si prosegue senza cache.
-      - name: Pull previous image (layer cache)
-        run: podman pull "$IMAGE:${{ steps.ver.outputs.version }}" || echo "nessuna cache disponibile, build completa"
-
+      # Cache distribuito Buildah: --cache-from/--cache-to accettano solo il
+      # repository, MAI tag o digest (Buildah calcola i tag da sé dagli step).
+      # Occorrono --layers e --cache-to, altrimenti --cache-from non popola/usa
+      # nulla. Al primo giro il repo di cache è vuoto e la build prosegue.
       - name: Build image
         run: |
           podman build \
-            --cache-from "$IMAGE:${{ steps.ver.outputs.version }}" \
+            --layers \
+            --cache-from "$IMAGE" \
+            --cache-to "$IMAGE" \
             --build-arg "FEDORA_VERSION=${{ steps.ver.outputs.version }}" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
             --build-arg "VERSION=${{ steps.ver.outputs.version }}" \
