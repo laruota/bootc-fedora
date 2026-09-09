@@ -41,6 +41,7 @@ dnf5 install -y --setopt=install_weak_deps=False \
     tmux \
     trash-cli \
     tree \
+    virt-viewer \
     wl-clipboard \
     zenity \
     zoxide \

@@ -65,7 +65,6 @@ FLATPAKS=(
     org.inkscape.Inkscape
     org.libreoffice.LibreOffice
     org.remmina.Remmina
-    org.virt_manager.virt-viewer
 )
 
 if [ "${#FLATPAKS[@]}" -eq 0 ]; then
