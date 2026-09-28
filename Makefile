@@ -40,9 +40,12 @@ push:
 	./scripts/push.sh $(ORG) $(FEDORA_VERSION) $(IMAGE) $(TAG)
 
 # Build the installer container (OS + Anaconda + ISO tools) used by image-builder.
+# Built rootless from the local image, then loaded into root storage, because
+# image-builder runs as root and reads /var/lib/containers/storage.
 installer:
-	sudo podman build --build-arg BOOTC_IMAGE=$(IMAGE):$(TAG) \
+	podman build --build-arg BOOTC_IMAGE=$(IMAGE):$(TAG) \
 	    -t $(INSTALLER_IMAGE):$(TAG) iso/
+	podman save $(INSTALLER_IMAGE):$(TAG) | sudo podman load
 
 # Build the installer ISO using the official osbuild image-builder CONTAINER
 # (no host install needed). bootc-generic-iso "explodes" the container, so it
