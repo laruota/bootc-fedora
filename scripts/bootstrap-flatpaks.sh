@@ -25,6 +25,7 @@ fi
 # >>> EDIT THIS LIST <<<
 FLATPAKS=(
     be.alexandervanhee.gradia
+    ca.desrt.dconf-editor
     com.belmoussaoui.Decoder
     com.github.finefindus.eyedropper
     com.github.huluti.Curtail

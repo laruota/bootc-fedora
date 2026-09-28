@@ -11,10 +11,7 @@ dnf5 install -y --setopt=install_weak_deps=False \
     android-tools \
     bat \
     btrfs-assistant \
-    cheat \
-    cheat-community-cheatsheets \
     chezmoi \
-    dconf-editor \
     fd-find \
     fzf \
     gh \
