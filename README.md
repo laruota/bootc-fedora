@@ -10,8 +10,8 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 2. **Test in VM** — `bcvk ephemeral run-ssh localhost/bootc-fedora`.
 3. **Pubblica su ghcr** — push su GitHub (CI) o `make push ORG=laruota`. Il package
    va reso **pubblico** per il pull anonimo usato dal deploy.
-4. **Prima installazione sulla target** — genera un'ISO con `bootc-image-builder`
-   (oppure un qcow2 per VM) e installa.
+4. **Prima installazione sulla target** — genera un'ISO con `image-builder`
+   (`bootc-generic-iso`; oppure un qcow2 per VM) e installa.
 5. **Aggiornamenti** — sulla target: `bootc switch` al tag desiderato, poi
    `bootc upgrade`.
 
@@ -24,6 +24,7 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
 - `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato in `/usr/libexec/bootc-fedora` nell'immagine)
 - `scripts/bootstrap-python.sh` — bootstrap di librerie Python nel profilo dell'utente via pip `--user` (copiato in `/usr/libexec/bootc-fedora`)
+- `iso/` — container installer + configurazione per generare l'ISO con `image-builder` (`bootc-generic-iso`)
 
 ## Personalizzazioni attuali
 
@@ -76,7 +77,7 @@ L'immagine contenitore NON contiene chiavi LUKS (la crittografia è creata in lo
 sulla target all'installazione).
 
 La GitHub Action `.github/workflows/build.yml` builda e pubblica su
-`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `master`
+`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `main`
 e su `workflow_dispatch`. Entrambi sono tag **mutabili**: rappresentano il canale
 Fedora corrente, non una release immutabile. Il package su GitHub **deve essere pubblico** per il pull
 anonimo usato dal deploy (`bootc switch`): Packages → bootc-fedora → Settings →
@@ -91,70 +92,42 @@ Build manuale (stesso risultato della CI):
 
 ### ISO (consigliato per il portatile)
 
-`bootc-image-builder` **non** è nei repo Fedora come RPM: si usa il container
-ufficiale (richiede podman su un host Fedora/RHEL). L'output finisce in
-`./output/bootc-fedora-<tag>.iso` (ignorato da git tramite `*.iso`).
+Si usa **osbuild `image-builder`** con il tipo **`bootc-generic-iso`**: prende un
+container "installer" e lo "esplode" in un'ISO avviabile **senza dnf/depsolve**
+(niente problemi di repository). Sostituisce il vecchio `bootc-image-builder`
+(`anaconda-iso`), ora archiviato e non compatibile con i repo dnf5.
 
-Il builder **non** fa il pull da solo e non ha un rootfs di default (Fedora), quindi:
-- scarica prima l'immagine (`podman pull`), così la trova nello storage montato;
-- passa `--rootfs btrfs`. Il `Containerfile` imposta già btrfs come default
-  (`/usr/lib/bootc/install/50-bootc-fedora.toml`), quindi il flag è opzionale sulle
-  immagini ricostruite; resta qui per quelle già pushate senza il default.
+**1) Container installer** — `iso/Containerfile` deriva dall'immagine bootc e
+aggiunge Anaconda + gli strumenti richiesti (`xorriso`, `squashfs-tools`,
+`isomd5sum`, `grub2-efi-x64-cdboot`) e la configurazione ISO
+(`iso/iso.yaml`, `iso/interactive-defaults.ks`):
 
-Se il package è **privato**, prima del pull fai il login in ghcr.io come root:
-User = username GitHub; password = un Personal Access Token con scope `read:packages`
-(non la password di GitHub). In alternativa rendi il package pubblico (vedi sopra).
+    make installer     # = sudo podman build -t localhost/bootc-fedora-installer:latest iso/
 
-    sudo podman login ghcr.io                       # solo se il package è privato
-    sudo podman pull ghcr.io/laruota/bootc-fedora:45
-    sudo podman run --rm -it --privileged \
-      --security-opt label=type:unconfined_t \
-      -v /var/lib/containers/storage:/var/lib/containers/storage \
-      -v "$PWD/output":/output \
-      quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --rootfs btrfs ghcr.io/laruota/bootc-fedora:45
+**2) Genera l'ISO** — servono `image-builder` + osbuild (RPM Fedora):
 
-Se l'immagine è solo locale (non pushato), usa `--local`:
+    sudo dnf install image-builder osbuild osbuild-depsolve-dnf
+    make iso           # = image-builder build \
+                       #     --bootc-ref localhost/bootc-fedora-installer:latest \
+                       #     --bootc-default-fs btrfs bootc-generic-iso
 
-    sudo podman run --rm -it --privileged \
-      --security-opt label=type:unconfined_t \
-      -v /var/lib/containers/storage:/var/lib/containers/storage \
-      -v "$PWD/output":/output \
-      quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --rootfs btrfs --local localhost/bootc-fedora:latest
+L'ISO viene scritta in una sottocartella creata da `image-builder` (il file `.iso`
+è ignorato da git). Al boot Anaconda installa `ghcr.io/laruota/bootc-fedora:45`
+(configurato in `iso/interactive-defaults.ks`).
+Per l'installazione **offline** aggiungi al comando:
+`--bootc-installer-payload-ref ghcr.io/laruota/bootc-fedora:45`.
 
-In caso di lock rimasti da run interrotte (`acquiring lock ... file exists`), prima
-identifica e rimuovi soltanto il container del builder coinvolto:
+**3) Scrivi su USB e installa:**
 
-    sudo podman ps -a
-    sudo podman rm -f <id-o-nome-del-builder>
+    lsblk
+    sudo dd if=<file>.iso of=/dev/sdX bs=4M status=progress oflag=sync
 
-`sudo podman system reset -f` rimuove l'intero storage Podman (immagini, container e
-volumi inclusi) e non va usato come recovery ordinario per questo progetto.
-
-#### Crittografia LUKS con passphrase (tipo Workstation)
-
-Il builder installa in modo automatico, quindi per la cifratura serve un kickstart.
-Crea un file `iso.ks` **solo locale** (non committarlo con la passphrase vera). Sostituisci
-`sda` con il disco destinato all'installazione: i comandi seguenti cancellano solo quel disco.
-
-    ignoredisk --only-use=sda
-    clearpart --drives=sda --all --initlabel
-    part / --fstype btrfs --grow --encrypted --passphrase=<tua-passphrase> --ondisk=sda
-
-e poi (stessa forma di sopra, con `--kickstart`):
-
-    sudo podman run --rm -it --privileged \
-      --security-opt label=type:unconfined_t \
-      -v /var/lib/containers/storage:/var/lib/containers/storage \
-      -v "$PWD/output":/output \
-      quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --rootfs btrfs --kickstart iso.ks ghcr.io/laruota/bootc-fedora:45
-
-L'ISO installa con la root cifrata (`/boot` resta non cifrato, come su Workstation);
-all'avvio chiede la passphrase. In alternativa, per LUKS con sblocco **automatico
-via TPM**: installa senza kickstart, poi abilita LUKS a post-installazione con
-`bootc install to-disk --block-setup tpm2-luks` su un secondo disco.
+#### Crittografia LUKS
+- **Passphrase**: aggiungi un kickstart con `part ... --encrypted --passphrase=...`
+  (es. `iso/luks.ks`, **non** committarlo con la passphrase vera) e passalo a
+  `image-builder` (blueprint `[customizations.installer.kickstart]`).
+- **TPM (sblocco automatico)**: installa senza cifratura, poi
+  `bootc install to-disk --block-setup tpm2-luks`.
 
 ### qcow2 per VM (bcvk)
 
@@ -174,7 +147,7 @@ Installazione con **disco criptato (LUKS)**:
 
 ## Note
 
-- L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `master`
+- L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `main`
   (o `workflow_dispatch`) ricostruisce e pubblica una nuova immagine; la target la
   riceve con `bootc upgrade` dopo `bootc switch`.
 - **App GNOME**: papers, loupe, gnome-calendar, ecc. NON sono nell'immagine — sono

@@ -1,0 +1,6 @@
+label: "bootc-fedora-Installer"
+grub2:
+  entries:
+    - name: "Install bootc-fedora"
+      linux: "/images/pxeboot/vmlinuz inst.stage2=hd:LABEL=bootc-fedora-Installer console=tty0 inst.graphical selinux=0 rhgb quiet"
+      initrd: "/images/pxeboot/initrd.img"

@@ -3,3 +3,4 @@ output/
 *.img
 *.iso
 iso.ks
+RIEPILOGO*.txt
