@@ -8,6 +8,7 @@
 FEDORA_VERSION ?= $(shell sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)
 IMAGE          ?= localhost/bootc-fedora
 INSTALLER_IMAGE ?= localhost/bootc-fedora-installer
+BUILDER_IMAGE  ?= ghcr.io/osbuild/image-builder-cli:latest
 TAG            ?= latest
 ORG            ?=
 SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck-alpine:v0.11.0
@@ -43,11 +44,18 @@ installer:
 	sudo podman build --build-arg BOOTC_IMAGE=$(IMAGE):$(TAG) \
 	    -t $(INSTALLER_IMAGE):$(TAG) iso/
 
-# Build the installer ISO with osbuild image-builder (bootc-generic-iso: no dnf
-# depsolve, so no repository handling needed). Requires on the host:
-#   sudo dnf install image-builder osbuild osbuild-depsolve-dnf
+# Build the installer ISO using the official osbuild image-builder CONTAINER
+# (no host install needed). bootc-generic-iso "explodes" the container, so it
+# does no dnf/depsolve and needs no repository handling.
+# The host container storage is mounted so the builder can read the local
+# installer image. On SELinux-enforced hosts you may need `--security-opt label=disable`.
+# Alternative (host install): sudo dnf install image-builder osbuild osbuild-depsolve-dnf
+#   then: sudo image-builder build --bootc-ref $(INSTALLER_IMAGE):$(TAG) --bootc-default-fs btrfs bootc-generic-iso
 iso: installer
-	sudo image-builder build \
-	    --bootc-ref $(INSTALLER_IMAGE):$(TAG) \
-	    --bootc-default-fs btrfs \
-	    bootc-generic-iso
+	mkdir -p output
+	sudo podman run --privileged --rm \
+	    -v /var/lib/containers/storage:/var/lib/containers/storage \
+	    -v "$(CURDIR)/output:/output" \
+	    $(BUILDER_IMAGE) \
+	    build --bootc-ref $(INSTALLER_IMAGE):$(TAG) \
+	    --bootc-default-fs btrfs bootc-generic-iso

@@ -104,18 +104,22 @@ aggiunge Anaconda + gli strumenti richiesti (`xorriso`, `squashfs-tools`,
 
     make installer     # = sudo podman build -t localhost/bootc-fedora-installer:latest iso/
 
-**2) Genera l'ISO** — servono `image-builder` + osbuild (RPM Fedora):
+**2) Genera l'ISO** — basta **podman** (nessun RPM da installare): `make iso` usa il
+container ufficiale `ghcr.io/osbuild/image-builder-cli:latest`.
 
-    sudo dnf install image-builder osbuild osbuild-depsolve-dnf
-    make iso           # = image-builder build \
-                       #     --bootc-ref localhost/bootc-fedora-installer:latest \
-                       #     --bootc-default-fs btrfs bootc-generic-iso
+    make iso           # = sudo podman run --privileged --rm \
+                       #     -v /var/lib/containers/storage:/var/lib/containers/storage \
+                       #     -v "$PWD/output:/output" \
+                       #     ghcr.io/osbuild/image-builder-cli:latest \
+                       #     build --bootc-ref localhost/bootc-fedora-installer:latest \
+                       #           --bootc-default-fs btrfs bootc-generic-iso
 
-L'ISO viene scritta in una sottocartella creata da `image-builder` (il file `.iso`
-è ignorato da git). Al boot Anaconda installa `ghcr.io/laruota/bootc-fedora:45`
-(configurato in `iso/interactive-defaults.ks`).
-Per l'installazione **offline** aggiungi al comando:
-`--bootc-installer-payload-ref ghcr.io/laruota/bootc-fedora:45`.
+(Alternativa senza container: `sudo dnf install image-builder osbuild osbuild-depsolve-dnf`
+e poi `sudo image-builder build --bootc-ref ... --bootc-default-fs btrfs bootc-generic-iso`.)
+
+L'ISO viene scritta in `output/` (il file `.iso` è ignorato da git). Al boot Anaconda
+installa `ghcr.io/laruota/bootc-fedora:45` (configurato in `iso/interactive-defaults.ks`).
+Per l'installazione **offline** aggiungi `--bootc-installer-payload-ref ghcr.io/laruota/bootc-fedora:45`.
 
 **3) Scrivi su USB e installa:**
 
