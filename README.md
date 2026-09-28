@@ -1,6 +1,6 @@
 # bootc-fedora
 
-Immagine bootc GNOME personalizzata, basata su `quay.io/fedora/fedora-silverblue:44`.
+Immagine bootc GNOME personalizzata, basata su `quay.io/fedora/fedora-silverblue:45`.
 Build con podman; l'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora` e gli
 aggiornamenti sulla target avvengono via `bootc upgrade`.
 
@@ -33,7 +33,7 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 - **Flatpak sulla target** (~42 app via `bootstrap-flatpaks.sh`): Chrome, Obsidian, GIMP, LibreOffice,
   Inkscape, Foliate, Meld, Transmission, Flatseal, ExtensionManager, Remmina, Warehouse, Resources,
   Switcheroo, Decoder, Eyedropper, Gear Lever, Celluloid, Gitte, MailViewer, PDF Arranger, Xournal++,
-  gthumb, virt-viewer, + app GNOME (Calculator, Calendar, Characters, Decibels, FileRoller, FontViewer,
+  Gradia, gthumb, virt-viewer, + app GNOME (Calculator, Calendar, Characters, Decibels, FileRoller, FontViewer,
   Logs, Loupe, Maps, Papers, Snapshot, Solanum, TextEditor, baobab, Apostrophe, Shortwave, Curtail, MediaWriter)
 - **Python**: pipx + python3-pip nell'immagine. Su immutabile si usa:
   `pipx install` per i tool CLI (`~/.local`) e `python3 -m venv` per i progetti
@@ -53,8 +53,8 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
 ## Build
 
-    make build                       # usa FEDORA_VERSION=44 di default
-    make build FEDORA_VERSION=43     # override
+    make build                       # usa FEDORA_VERSION=45 di default
+    make build FEDORA_VERSION=44     # override
     make shellcheck                  # lint degli script shell
 
 ## Test in VM
@@ -85,7 +85,7 @@ Change visibility. Se resta privato, serve il login (vedi sotto).
 Build manuale (stesso risultato della CI):
 
     make push ORG=laruota              # oppure: ./scripts/push.sh laruota
-    podman pull ghcr.io/laruota/bootc-fedora:44   # verifica pull anonimo
+    podman pull ghcr.io/laruota/bootc-fedora:45   # verifica pull anonimo
 
 ## Prima installazione sulla target
 
@@ -106,13 +106,13 @@ User = username GitHub; password = un Personal Access Token con scope `read:pack
 (non la password di GitHub). In alternativa rendi il package pubblico (vedi sopra).
 
     sudo podman login ghcr.io                       # solo se il package è privato
-    sudo podman pull ghcr.io/laruota/bootc-fedora:44
+    sudo podman pull ghcr.io/laruota/bootc-fedora:45
     sudo podman run --rm -it --privileged \
       --security-opt label=type:unconfined_t \
       -v /var/lib/containers/storage:/var/lib/containers/storage \
       -v "$PWD/output":/output \
       quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --rootfs btrfs ghcr.io/laruota/bootc-fedora:44
+      --type iso --rootfs btrfs ghcr.io/laruota/bootc-fedora:45
 
 Se l'immagine è solo locale (non pushato), usa `--local`:
 
@@ -149,7 +149,7 @@ e poi (stessa forma di sopra, con `--kickstart`):
       -v /var/lib/containers/storage:/var/lib/containers/storage \
       -v "$PWD/output":/output \
       quay.io/centos-bootc/bootc-image-builder:latest \
-      --type iso --rootfs btrfs --kickstart iso.ks ghcr.io/laruota/bootc-fedora:44
+      --type iso --rootfs btrfs --kickstart iso.ks ghcr.io/laruota/bootc-fedora:45
 
 L'ISO installa con la root cifrata (`/boot` resta non cifrato, come su Workstation);
 all'avvio chiede la passphrase. In alternativa, per LUKS con sblocco **automatico
@@ -164,7 +164,7 @@ via TPM**: installa senza kickstart, poi abilita LUKS a post-installazione con
 
 Per un sistema già installato (da ISO o qcow2), aggancia/aggiorna l'immagine dal registry:
 
-    bootc switch ghcr.io/laruota/bootc-fedora:44
+    bootc switch ghcr.io/laruota/bootc-fedora:45
     bootc upgrade                # aggiornamenti futuri
 
 Installazione con **disco criptato (LUKS)**:

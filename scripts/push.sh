@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ORG="${1:?Uso: ./scripts/push.sh <org> [tag] [source-image] [source-tag]}"
-TAG="${2:-44}"
+TAG="${2:-45}"
 SOURCE_IMAGE="${3:-localhost/bootc-fedora}"
 SOURCE_TAG="${4:-latest}"
 SOURCE="${SOURCE_IMAGE}:${SOURCE_TAG}"

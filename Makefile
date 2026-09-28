@@ -1,6 +1,6 @@
 # Build/publish helper for the bootc-fedora image.
 # Override on the command line, e.g.:
-#   make build FEDORA_VERSION=43
+#   make build FEDORA_VERSION=44
 #   make push ORG=my-org
 
 # Single source of truth for the Fedora version: ARG FEDORA_VERSION in the

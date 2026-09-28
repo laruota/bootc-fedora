@@ -1,9 +1,9 @@
 # Custom GNOME bootc image derived from Fedora Silverblue.
 # Bump Fedora: change FEDORA_VERSION below (single source of truth).
-# Build: podman build --build-arg FEDORA_VERSION=44 -t localhost/bootc-fedora:latest .
+# Build: podman build --build-arg FEDORA_VERSION=45 -t localhost/bootc-fedora:latest .
 # Base: official GNOME atomic bootc image (dnf5 + bootc included).
 
-ARG FEDORA_VERSION=44
+ARG FEDORA_VERSION=45
 FROM quay.io/fedora/fedora-silverblue:${FEDORA_VERSION}
 
 # Build metadata (VERSION/SOURCE_COMMIT are passed by CI or the Makefile).
