@@ -1,5 +1,13 @@
 name: build
 
+# TODO (migliorie future — riferimento: ublue-os/image-template):
+# - Firma cosign delle immagini (secret SIGNING_SECRET + sigstore/cosign-installer,
+#   `cosign sign --new-bundle-format=false`) ed eventuale enforcement lato target
+#   (policy.json `sigstoreSigned` + `--enforce-container-sigpolicy`).
+# - Tag immutabili per data/sha (`:45-<data>`, `:45-<sha>`) oltre a `:45`/`:latest`.
+# - Pin della base per digest + Renovate/Dependabot per il bump automatico.
+# - (opzionale) rebuild schedulato (cron) e rechunk per update più piccoli.
+
 on:
   push:
     branches: [main]
