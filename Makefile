@@ -3,8 +3,9 @@
 #   make build FEDORA_VERSION=44
 #   make push ORG=my-org
 
-# Single source of truth for the Fedora version: ARG FEDORA_VERSION in the
-# Containerfile (override with `make build FEDORA_VERSION=X` for one-offs).
+# Default Fedora version: ARG FEDORA_VERSION in the Containerfile (override with
+# `make build FEDORA_VERSION=X` for one-offs). When bumping, also update the
+# default TAG in scripts/push.sh and the tag in iso/interactive-defaults.ks.
 FEDORA_VERSION ?= $(shell sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)
 IMAGE          ?= localhost/bootc-fedora
 INSTALLER_IMAGE ?= localhost/bootc-fedora-installer
@@ -13,7 +14,7 @@ TAG            ?= latest
 ORG            ?=
 SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck-alpine:v0.11.0
 
-.PHONY: build lint shellcheck smoke push installer iso
+.PHONY: build lint shellcheck smoke push installer iso clean
 
 # Build the image. `bootc container lint` runs at the end of the Containerfile,
 # so a successful build already means the image is validated.
@@ -23,9 +24,9 @@ build:
 	    --build-arg "SOURCE_COMMIT=$$(git rev-parse HEAD 2>/dev/null)" \
 	    -t $(IMAGE):$(TAG) .
 
-# Explicit re-lint (handy after editing the Containerfile without a full rebuild).
+# Re-run the image linter on an already-built image (same check the build runs).
 lint:
-	podman run --rm $(IMAGE):$(TAG) bootc container lint
+	podman run --rm $(IMAGE):$(TAG) bootc container lint --fatal-warnings
 
 # Lint scripts without adding ShellCheck to the deployed operating system.
 shellcheck:
@@ -33,7 +34,19 @@ shellcheck:
 
 # Check the custom operating-system content without requiring a VM boot.
 smoke:
-	podman run --rm $(IMAGE):$(TAG) bash -ceu 'bootc container lint; test -x /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh; test -x /usr/libexec/bootc-fedora/bootstrap-python.sh; test -f /usr/lib/bootc/install/50-bootc-fedora.toml; grep -Fxq "type = \"btrfs\"" /usr/lib/bootc/install/50-bootc-fedora.toml; test -f /usr/lib/bootc/kargs.d/00-desktop.toml; grep -Fxq "kargs = [\"rhgb\", \"quiet\"]" /usr/lib/bootc/kargs.d/00-desktop.toml; readlink /etc/localtime | grep -Fxq /usr/share/zoneinfo/Europe/Rome; grep -Fxq LANG=it_IT.UTF-8 /etc/locale.conf; command -v code; rpm -q google-noto-sans-vf-fonts google-noto-serif-vf-fonts google-noto-sans-mono-vf-fonts google-noto-color-emoji-fonts; if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
+	podman run --rm $(IMAGE):$(TAG) bash -ceu \
+	    'bootc container lint; \
+	    test -x /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh; \
+	    test -x /usr/libexec/bootc-fedora/bootstrap-python.sh; \
+	    test -f /usr/lib/bootc/install/50-bootc-fedora.toml; \
+	    grep -Fxq "type = \"btrfs\"" /usr/lib/bootc/install/50-bootc-fedora.toml; \
+	    test -f /usr/lib/bootc/kargs.d/00-desktop.toml; \
+	    grep -Fxq "kargs = [\"rhgb\", \"quiet\"]" /usr/lib/bootc/kargs.d/00-desktop.toml; \
+	    readlink /etc/localtime | grep -Fxq /usr/share/zoneinfo/Europe/Rome; \
+	    grep -Fxq LANG=it_IT.UTF-8 /etc/locale.conf; \
+	    command -v code; \
+	    rpm -q google-noto-sans-vf-fonts google-noto-serif-vf-fonts google-noto-sans-mono-vf-fonts google-noto-color-emoji-fonts; \
+	    if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
 
 # Tag and push to ghcr.io via scripts/push.sh. Requires `podman login ghcr.io` once.
 push:
@@ -64,3 +77,11 @@ iso: installer
 	    $(BUILDER_IMAGE) \
 	    build --bootc-ref $(INSTALLER_IMAGE):$(TAG) \
 	    --bootc-default-fs btrfs bootc-generic-iso
+	sudo chown -R "$$(id -u):$$(id -g)" output
+
+# Remove local build artifacts (ISO/qcow2 in output/). Does not remove images:
+# reclaim those manually with `podman rmi` (rootless) / `sudo podman rmi` (root).
+# `make iso` writes the ISO as root, so fall back to sudo if plain rm hits a
+# root-owned file.
+clean:
+	rm -rf output 2>/dev/null || sudo rm -rf output
