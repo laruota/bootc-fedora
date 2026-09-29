@@ -19,6 +19,7 @@ SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck-alpine:v0.11.0
 # so a successful build already means the image is validated.
 build:
 	podman build --build-arg FEDORA_VERSION=$(FEDORA_VERSION) \
+	    --build-arg "VERSION=$(FEDORA_VERSION)" \
 	    --build-arg "SOURCE_COMMIT=$$(git rev-parse HEAD 2>/dev/null)" \
 	    -t $(IMAGE):$(TAG) .
 
@@ -32,7 +33,7 @@ shellcheck:
 
 # Check the custom operating-system content without requiring a VM boot.
 smoke:
-	podman run --rm $(IMAGE):$(TAG) bash -ceu 'bootc container lint; test -x /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh; test -x /usr/libexec/bootc-fedora/bootstrap-python.sh; test -f /usr/lib/bootc/install/50-bootc-fedora.toml; grep -Fxq "type = \"btrfs\"" /usr/lib/bootc/install/50-bootc-fedora.toml; readlink /etc/localtime | grep -Fxq /usr/share/zoneinfo/Europe/Rome; grep -Fxq LANG=it_IT.UTF-8 /etc/locale.conf; command -v code; rpm -q google-noto-sans-vf-fonts google-noto-serif-vf-fonts google-noto-sans-mono-vf-fonts google-noto-color-emoji-fonts; if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
+	podman run --rm $(IMAGE):$(TAG) bash -ceu 'bootc container lint; test -x /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh; test -x /usr/libexec/bootc-fedora/bootstrap-python.sh; test -f /usr/lib/bootc/install/50-bootc-fedora.toml; grep -Fxq "type = \"btrfs\"" /usr/lib/bootc/install/50-bootc-fedora.toml; test -f /usr/lib/bootc/kargs.d/00-desktop.toml; grep -Fxq "kargs = [\"rhgb\", \"quiet\"]" /usr/lib/bootc/kargs.d/00-desktop.toml; readlink /etc/localtime | grep -Fxq /usr/share/zoneinfo/Europe/Rome; grep -Fxq LANG=it_IT.UTF-8 /etc/locale.conf; command -v code; rpm -q google-noto-sans-vf-fonts google-noto-serif-vf-fonts google-noto-sans-mono-vf-fonts google-noto-color-emoji-fonts; if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
 
 # Tag and push to ghcr.io via scripts/push.sh. Requires `podman login ghcr.io` once.
 push:
@@ -45,7 +46,7 @@ push:
 installer:
 	podman build --build-arg BOOTC_IMAGE=$(IMAGE):$(TAG) \
 	    -t $(INSTALLER_IMAGE):$(TAG) iso/
-	podman save $(INSTALLER_IMAGE):$(TAG) | sudo podman load
+	bash -o pipefail -c 'podman save $(INSTALLER_IMAGE):$(TAG) | sudo podman load'
 
 # Build the installer ISO using the official osbuild image-builder CONTAINER
 # (no host install needed). bootc-generic-iso "explodes" the container, so it
@@ -56,7 +57,8 @@ installer:
 #   then: sudo image-builder build --bootc-ref $(INSTALLER_IMAGE):$(TAG) --bootc-default-fs btrfs bootc-generic-iso
 iso: installer
 	mkdir -p output
-	sudo podman run --privileged --rm \
+	sudo podman run --privileged --rm --pull=newer \
+	    --security-opt label=type:unconfined_t \
 	    -v /var/lib/containers/storage:/var/lib/containers/storage \
 	    -v "$(CURDIR)/output:/output" \
 	    $(BUILDER_IMAGE) \

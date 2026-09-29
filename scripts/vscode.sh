@@ -5,7 +5,8 @@ set -euo pipefail
 # Trust the Microsoft signing key
 rpm --import https://packages.microsoft.com/keys/microsoft.asc
 
-# Add the VS Code repository
+# Add the VS Code repository. gpgcheck=1 still verifies RPM signatures; if
+# Microsoft rotates its metadata signing key and builds break, set repo_gpgcheck=0.
 cat > /etc/yum.repos.d/vscode.repo <<'EOF'
 [vscode]
 name=Visual Studio Code

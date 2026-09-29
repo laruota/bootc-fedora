@@ -17,8 +17,8 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
 ## Contenuto
 
-- `Containerfile` — definizione dell'immagine (versione Fedora via `ARG FEDORA_VERSION`, unica fonte)
-- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make push`
+- `Containerfile` — definizione dell'immagine (versione Fedora via `ARG FEDORA_VERSION`)
+- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso`
 - `scripts/setup.sh` — pacchetti da installare/rimuovere (aggiungi qui le tue utility)
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
@@ -28,13 +28,15 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
 ## Personalizzazioni attuali
 
-- Aggiunti: neovim, zsh, btrfs-assistant, sushi, cheat (+ cheat-community-cheatsheets),
-  dconf-editor, gnome-tweaks, seahorse, zenity, GraphicsMagick, Visual Studio Code,
-  gh, git-gui, git-delta, qpdf, mat2, gstreamer1-plugin-openh264, solaar(+udev)
-- **Flatpak sulla target** (~42 app via `bootstrap-flatpaks.sh`): Chrome, Obsidian, GIMP, LibreOffice,
+- Aggiunti (RPM): neovim, zsh, btrfs-assistant, sushi, gnome-tweaks, seahorse, zenity,
+  GraphicsMagick, Visual Studio Code, gh, git-gui, git-delta, qpdf, mat2,
+  gstreamer1-plugin-openh264, solaar(+udev), virt-viewer, android-tools, bat, chezmoi,
+  fd-find, fzf, nmap, nnn, pipx, podman-compose, python3-pip, ripgrep, syncthing,
+  tldr, tmux, trash-cli, tree, wl-clipboard, zoxide
+- **Flatpak sulla target** (~43 app via `bootstrap-flatpaks.sh`): Chrome, Obsidian, GIMP, LibreOffice,
   Inkscape, Foliate, Meld, Transmission, Flatseal, ExtensionManager, Remmina, Warehouse, Resources,
-  Switcheroo, Decoder, Eyedropper, Gear Lever, Celluloid, Gitte, MailViewer, PDF Arranger, Xournal++,
-  Gradia, gthumb, virt-viewer, + app GNOME (Calculator, Calendar, Characters, Decibels, FileRoller, FontViewer,
+  Switcheroo, Decoder, Eyedropper, dconf-editor, Gear Lever, Celluloid, Gitte, MailViewer, PDF Arranger,
+  Xournal++, Gradia, gthumb, + app GNOME (Calculator, Calendar, Characters, Decibels, FileRoller, FontViewer,
   Logs, Loupe, Maps, Papers, Snapshot, Solanum, TextEditor, baobab, Apostrophe, Shortwave, Curtail, MediaWriter)
 - **Python**: pipx + python3-pip nell'immagine. Su immutabile si usa:
   `pipx install` per i tool CLI (`~/.local`) e `python3 -m venv` per i progetti
@@ -44,12 +46,16 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
    usa gli script (pip `--user --break-system-packages`; non usare `sudo`).
 - Install con `install_weak_deps=False`: non vengono trascinate dipendenze deboli
   (nodejs22/npm, gcc, xsel, evince-djvu, snapper, btrfsmaintenance, tree-sitter-cli, ...);
-  niente ansible né virt-viewer (usati via toolbox/flatpak).
+  niente ansible (usato via toolbox).
 - Rimossi: vim (→ neovim, con `vi` che punta a nvim), gnome-tour, ibus-* non usati (anthy/hangul/m17n/typing-booster/pinyin),
   NetworkManager-adsl, evolution-ews (+ core/langpacks), gnome-shell-extension-background-logo, malcontent-control,
   font di scritture non-Latine (CJK, arabo, indiano, ebraico, thai, ...) e langpacks non `it`/`en`.
   Restano i font core (Cantarell/GNOME, Noto Latin+emoji+simboli+math, Liberation, STIX).
 - Rimossi i file repo di terze parti (rpmfusion, PyCharm, google-chrome); restano fedora/updates/openh264/vscode.
+- Kernel args di default dell'immagine (`/usr/lib/bootc/kargs.d/00-desktop.toml`): `rhgb quiet`,
+  necessari per il prompt **grafico** della passphrase LUKS all'avvio (senza `rhgb` plymouth resta in
+  modalità testo). Sono kargs bootc, quindi valgono anche "day 2" via `bootc upgrade`.
+- SELinux abilitato/enforcing come su Silverblue; l'ISO non passa `selinux=0` (vedi "Prompt grafico LUKS e SELinux").
 - Shell default per i nuovi utenti: zsh
 
 ## Build
@@ -107,7 +113,8 @@ aggiunge Anaconda + gli strumenti richiesti (`xorriso`, `squashfs-tools`,
 **2) Genera l'ISO** — basta **podman** (nessun RPM da installare): `make iso` usa il
 container ufficiale `ghcr.io/osbuild/image-builder-cli:latest`.
 
-    make iso           # = sudo podman run --privileged --rm \
+    make iso           # = sudo podman run --privileged --rm --pull=newer \
+                       #     --security-opt label=type:unconfined_t \
                        #     -v /var/lib/containers/storage:/var/lib/containers/storage \
                        #     -v "$PWD/output:/output" \
                        #     ghcr.io/osbuild/image-builder-cli:latest \
@@ -149,6 +156,33 @@ Installazione con **disco criptato (LUKS)**:
 - **Passphrase (come Workstation)**: usa l'ISO con kickstart precedente, oppure spunta
   la crittografia durante l'installazione Anaconda.
 
+## Prompt grafico LUKS e SELinux
+
+Con root cifrata la passphrase può essere chiesta da plymouth (GUI) oppure in
+modalità testo. Il prompt **grafico** richiede `rhgb` (o `splash`) sulla command
+line del kernel: senza, plymouth resta in modalità "details" (testo). L'immagine
+imposta `rhgb quiet` di default in `/usr/lib/bootc/kargs.d/00-desktop.toml`,
+quindi valgono anche "day 2" via `bootc upgrade`.
+
+Su un sistema già installato dove appare il prompt testuale:
+
+    sudo rpm-ostree kargs --append=rhgb --append=quiet
+    # riavvia
+
+Nota sul percorso ISO (`iso/iso.yaml`, `bootc-generic-iso`): gli argomenti GRUB
+dell'installer **non** passano al sistema installato, tranne quelli in
+`preserved_arguments` di Anaconda (`selinux`, `console`, ...). `rhgb`/`quiet`
+non sono tra questi: per questo servono i `kargs.d` nell'immagine.
+
+⚠️ **SELinux**: non usare `selinux=0` nel boot dell'installer. Disabilita SELinux
+anche nel sistema installato (Anaconda lo preserva e bootc forza il target:
+`SELinuxFinalState::ForceTargetDisabled`). Per riattivare SELinux su una macchina
+già installata con `selinux=0`:
+
+    sudo rpm-ostree kargs --delete=selinux=0
+    sudo touch /.autorelabel      # forza il relabel al prossimo boot
+    sudo systemctl reboot         # verifica con getenforce / sestatus
+
 ## Note
 
 - L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `main`
@@ -167,7 +201,7 @@ Installazione con **disco criptato (LUKS)**:
 - **cups**: tenuto il server (stampante anche USB passa da cupsd); cups-client è già presente.
 - **nmcli**: presente (fa parte di NetworkManager).
 - La pulizia font è sperimentale: verificarne l'effetto in VM prima di fidarsene.
-- Bump di versione Fedora: cambiare `ARG FEDORA_VERSION` nel `Containerfile` (unica fonte; `make build` e `make push` la usano automaticamente).
+- Bump di versione Fedora: `ARG FEDORA_VERSION` nel `Containerfile` (usato da `make build`/`make push`), più il default `TAG` in `scripts/push.sh` e il tag in `iso/interactive-defaults.ks`.
 
 ## Licenza
 

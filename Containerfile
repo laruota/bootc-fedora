@@ -1,5 +1,6 @@
 # Custom GNOME bootc image derived from Fedora Silverblue.
-# Bump Fedora: change FEDORA_VERSION below (single source of truth).
+# Bump Fedora: change FEDORA_VERSION below (used by make build/push); also update
+# the default TAG in scripts/push.sh and the tag in iso/interactive-defaults.ks.
 # Build: podman build --build-arg FEDORA_VERSION=45 -t localhost/bootc-fedora:latest .
 # Base: official GNOME atomic bootc image (dnf5 + bootc included).
 
@@ -50,11 +51,17 @@ RUN --mount=type=bind,source=scripts,target=/tmp/scripts \
 # on Fedora Atomic, so it is intentionally not used for versioned image content.
 COPY --chmod=0755 scripts/bootstrap-flatpaks.sh scripts/bootstrap-python.sh /usr/libexec/bootc-fedora/
 
-# Host locale/timezone, default editor and root filesystem type. OCI ENV vars do
-# not reach bootc-deployed sessions, so host settings must be written to the fs.
-RUN mkdir -p /usr/lib/bootc/install && \
+# Host locale/timezone, default editor, root filesystem type and default kernel
+# arguments. OCI ENV vars do not reach bootc-deployed sessions, so host settings
+# must be written to the fs.
+# rhgb+quiet: without rhgb plymouth does not load the graphical theme, so the
+# LUKS passphrase prompt falls back to text mode (see README). These are bootc
+# kargs, so they are also applied "day 2" on existing installs via bootc upgrade.
+RUN mkdir -p /usr/lib/bootc/install /usr/lib/bootc/kargs.d && \
     printf '[install.filesystem.root]\ntype = "btrfs"\n' \
     > /usr/lib/bootc/install/50-bootc-fedora.toml && \
+    printf 'kargs = ["rhgb", "quiet"]\n' \
+    > /usr/lib/bootc/kargs.d/00-desktop.toml && \
     ln -sf /usr/share/zoneinfo/Europe/Rome /etc/localtime && \
     printf 'LANG=it_IT.UTF-8\n' > /etc/locale.conf && \
     printf '#!/bin/sh\nexport EDITOR=nvim VISUAL=nvim\n' > /etc/profile.d/50-editor.sh && \
@@ -62,4 +69,4 @@ RUN mkdir -p /usr/lib/bootc/install && \
     rm -f /var/cache/ldconfig/aux-cache
 
 # Validate the image
-RUN bootc container lint
+RUN bootc container lint --fatal-warnings

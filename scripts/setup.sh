@@ -62,7 +62,7 @@ fi
 #     (the "malcontent" core stays: hard dep of gnome-control-center,
 #      removing it cascades into gnome-shell and the whole desktop)
 #   - nodejs22 (+ npm): nothing requires it, saved ~169 MiB
-#   - xsel: orfano (xclip rimosso anche lui, nessuno dei due serve)
+#   - xsel: orfano (nessuno lo usa)
 #   - gcc/glibc-devel/kernel-headers/libxcrypt-devel: compile toolchain,
 #     unused on an immutable system (use toolbox/distrobox to compile)
 REMOVE=(

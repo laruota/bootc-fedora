@@ -9,6 +9,17 @@ on:
       - 'LICENSE'
       - 'Makefile'
       - 'scripts/push.sh'
+      - 'iso/**'
+      - '.github/**'
+  pull_request:
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'LICENSE'
+      - 'Makefile'
+      - 'scripts/push.sh'
+      - 'iso/**'
+      - '.github/**'
   workflow_dispatch:
     inputs:
       fedora_version:
@@ -52,6 +63,7 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -60,12 +72,19 @@ jobs:
       # repository, MAI tag o digest (Buildah calcola i tag da sé dagli step).
       # Occorrono --layers e --cache-to, altrimenti --cache-from non popola/usa
       # nulla. Al primo giro il repo di cache è vuoto e la build prosegue.
+      # Su pull_request il token è in sola lettura: si salta la scrittura cache.
       - name: Build image
+        env:
+          PUSH_CACHE: ${{ github.event_name != 'pull_request' }}
         run: |
+          cache_args=()
+          if [ "$PUSH_CACHE" = "true" ]; then
+            cache_args=(--cache-to "$IMAGE")
+          fi
           podman build \
             --layers \
             --cache-from "$IMAGE" \
-            --cache-to "$IMAGE" \
+            "${cache_args[@]}" \
             --build-arg "FEDORA_VERSION=${{ steps.ver.outputs.version }}" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
             --build-arg "VERSION=${{ steps.ver.outputs.version }}" \
@@ -76,6 +95,7 @@ jobs:
         run: make smoke IMAGE="$IMAGE" TAG="${{ steps.ver.outputs.version }}"
 
       - name: Push image
+        if: github.event_name != 'pull_request'
         run: |
           podman push "$IMAGE:${{ steps.ver.outputs.version }}"
           podman push "$IMAGE:latest"
