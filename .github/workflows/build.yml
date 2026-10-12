@@ -6,7 +6,7 @@ name: build
 #   (policy.json `sigstoreSigned` + `--enforce-container-sigpolicy`).
 # - Tag immutabili per data/sha (`:45-<data>`, `:45-<sha>`) oltre a `:45`/`:latest`.
 # - Pin della base per digest + Renovate/Dependabot per il bump automatico.
-# - (opzionale) rebuild schedulato (cron) e rechunk per update più piccoli.
+# - Rechunk per update più piccoli.
 
 on:
   push:
@@ -28,6 +28,12 @@ on:
       - 'scripts/push.sh'
       - 'iso/**'
       - '.github/**'
+  # Rebuild giornaliero. Serve perché `bootc upgrade` sulla target scarica l'immagine
+  # puntata dal tag: senza una ricostruzione periodica, kernel/RPM/VS Code aggiornati
+  # non arrivano mai (l'upgrade sarebbe un no-op). 03:17 UTC = fascia non di punta,
+  # minuto non "tondo" per evitare i ritardi di GitHub sugli orari in punto.
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       fedora_version:
@@ -89,7 +95,12 @@ jobs:
           if [ "$PUSH_CACHE" = "true" ]; then
             cache_args=(--cache-to "$IMAGE")
           fi
+          # --pull=newer: la base è un tag mutabile (fedora-silverblue:45); forzare
+          # il re-resolve garantisce che un nuovo digest della base busti la cache
+          # dei layer successivi (senza, i rebuild schedulati potrebbero riusare
+          # il layer dnf5 e non portare alcun pacchetto nuovo).
           podman build \
+            --pull=newer \
             --layers \
             --cache-from "$IMAGE" \
             "${cache_args[@]}" \

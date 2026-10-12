@@ -38,7 +38,7 @@ FLATPAKS=(
     com.transmissionbt.Transmission
     de.haeckerfelix.Shortwave
     de.wwwtech.gitte
-    io.gitlab.adhami3310.Converter
+    io.gitlab.adhami3310.Converter    # Switcheroo (ex "Converter")
     io.github.alescdb.mailviewer
     io.github.celluloid_player.Celluloid
     io.github.flattool.Warehouse

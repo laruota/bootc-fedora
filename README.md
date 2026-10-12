@@ -83,9 +83,12 @@ L'immagine contenitore NON contiene chiavi LUKS (la crittografia è creata in lo
 sulla target all'installazione).
 
 La GitHub Action `.github/workflows/build.yml` builda e pubblica su
-`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `main`
-e su `workflow_dispatch`. Entrambi sono tag **mutabili**: rappresentano il canale
-Fedora corrente, non una release immutabile. Il package su GitHub **deve essere pubblico** per il pull
+`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `main`,
+con un **rebuild giornaliero** (`schedule`, 03:17 UTC) e su `workflow_dispatch`.
+Il rebuild periodico è necessario perché `bootc upgrade` sulla target scarica
+l'immagine puntata dal tag: senza ricostruzioni, aggiornamenti di kernel/RPM (es.
+VS Code) non arriverebbero mai. Entrambi sono tag **mutabili**: rappresentano il
+canale Fedora corrente, non una release immutabile. Il package su GitHub **deve essere pubblico** per il pull
 anonimo usato dal deploy (`bootc switch`): Packages → bootc-fedora → Settings →
 Change visibility. Se resta privato, serve il login (vedi sotto).
 
@@ -185,9 +188,9 @@ già installata con `selinux=0`:
 
 ## Note
 
-- L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `main`
-  (o `workflow_dispatch`) ricostruisce e pubblica una nuova immagine; la target la
-  riceve con `bootc upgrade` dopo `bootc switch`.
+- L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `main`,
+  il rebuild giornaliero (03:17 UTC) o `workflow_dispatch` ricostruisce e pubblica
+  una nuova immagine; la target la riceve con `bootc upgrade` dopo `bootc switch`.
 - **App GNOME**: papers, loupe, gnome-calendar, ecc. NON sono nell'immagine — sono
   flatpak installati sulla target via GNOME Software. `bootstrap-flatpaks.sh` aggiunge
   e verifica il remote **Flathub completo** (Chrome e app proprietarie); non aggiunge
