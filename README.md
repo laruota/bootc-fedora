@@ -134,6 +134,12 @@ Non c'è più `--pull=newer`: la base è fissata dal digest. Gli RPM invece rest
 quelli dei repository al momento della build (non c'è snapshot dei repo: la
 riproducibilità è "rispetto alla base", non bit-per-bit).
 
+Il pin vale finché quel manifest esiste sul registry: quando Fedora ricompone
+Silverblue, quay.io può eliminare i manifest vecchi e una build da un commit
+datato fallirebbe con `manifest unknown`. In quel caso si allinea il pin
+(`bump-base`, o `make base-digest` + modifica dell'hash) e si ricostruisce: le
+immagini già pubblicate su GHCR restano comunque intatte.
+
 ### Firma
 
 Ogni build pubblicata è firmata con **cosign keyless**: la firma è legata a
