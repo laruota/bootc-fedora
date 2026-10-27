@@ -1,12 +1,11 @@
 name: build
 
 # TODO (migliorie future — riferimento: ublue-os/image-template):
-# - Firma cosign delle immagini (secret SIGNING_SECRET + sigstore/cosign-installer,
-#   `cosign sign --new-bundle-format=false`) ed eventuale enforcement lato target
-#   (policy.json `sigstoreSigned` + `--enforce-container-sigpolicy`).
-# - Tag immutabili per data/sha (`:45-<data>`, `:45-<sha>`) oltre a `:45`/`:latest`.
-# - Pin della base per digest + Renovate/Dependabot per il bump automatico.
-# - Rechunk per update più piccoli.
+# - Rechunk (`rpm-ostree experimental compose build-chunked-oci` / chunkah) per
+#   update più piccoli e riprendibili sulla target.
+# - Enforcement lato target (`policy.json` sigstoreSigned + `bootc switch
+#   --enforce-container-sigpolicy`): richiede una firma con chiave, che qui non
+#   è configurata. La firma keyless c'è già.
 
 on:
   push:
@@ -28,21 +27,23 @@ on:
       - 'scripts/push.sh'
       - 'iso/**'
       - '.github/**'
-  # Rebuild giornaliero. Serve perché `bootc upgrade` sulla target scarica l'immagine
-  # puntata dal tag: senza una ricostruzione periodica, kernel/RPM/VS Code aggiornati
-  # non arrivano mai (l'upgrade sarebbe un no-op). 03:17 UTC = fascia non di punta,
-  # minuto non "tondo" per evitare i ritardi di GitHub sugli orari in punto.
+  # Rebuild giornaliero. Serve perché `bootc upgrade` sulla target scarica
+  # l'immagine puntata dal tag: senza una ricostruzione periodica, gli RPM
+  # aggiornati nei repo (kernel a parte, che viene dalla base) non arrivano mai
+  # (l'upgrade sarebbe un no-op). 03:17 UTC = fascia non di punta, minuto non
+  # "tondo" per evitare i ritardi di GitHub sugli orari in punto. La base è
+  # pinnata per digest e viene aggiornata 37 minuti prima dal workflow
+  # `bump-base`: questo build raccoglie il pin nuovo.
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
-    inputs:
-      fedora_version:
-        description: 'Fedora version to build (empty = ARG del Containerfile)'
-        required: false
 
 permissions:
   contents: read
   packages: write
+  # Firma keyless (Sigstore) via OIDC di GitHub Actions: nessuna chiave da
+  # custodire, e la firma è legata a questo repo/workflow.
+  id-token: write
 
 concurrency:
   group: build-${{ github.ref }}
@@ -60,61 +61,146 @@ jobs:
       - name: ShellCheck scripts
         run: make shellcheck
 
-      # podman è già preinstallato sui runner ubuntu-latest.
-      # Unica fonte della versione: ARG FEDORA_VERSION nel Containerfile.
-      - name: Resolve Fedora version
+      # Unica fonte di verità: la riga FROM del Containerfile (tag + digest),
+      # letta da scripts/base-ref.sh. Se non è pinnata per digest lo script
+      # esce: meglio un errore chiaro che una build non riproducibile.
+      - name: Resolve version, date and base
         id: ver
-        env:
-          REQUESTED_FEDORA_VERSION: ${{ inputs.fedora_version }}
         run: |
-          V="${REQUESTED_FEDORA_VERSION:-}"
-          if [ -n "$V" ] && ! [[ "$V" =~ ^[0-9]+$ ]]; then
-            echo "fedora_version deve essere un intero positivo" >&2
-            exit 1
-          fi
-          [ -n "$V" ] || V="$(sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)"
-          [[ "$V" =~ ^[0-9]+$ ]] || { echo "ARG FEDORA_VERSION non valido" >&2; exit 1; }
-          echo "version=$V" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          version=$(scripts/base-ref.sh version)
+          base=$(scripts/base-ref.sh full)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+      # podman è già preinstallato sui runner ubuntu-latest.
+      # La login viene scritta anche in ~/.docker/config.json perché cosign usa
+      # quel file (non l'auth.json di podman).
       - name: Log in to ghcr.io
         if: github.event_name != 'pull_request'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.docker"
+          printf '%s' "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+          printf '%s' "$GHCR_TOKEN" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin \
+            --authfile "$HOME/.docker/config.json"
 
       # Cache distribuito Buildah: --cache-from/--cache-to accettano solo il
       # repository, MAI tag o digest (Buildah calcola i tag da sé dagli step).
       # Occorrono --layers e --cache-to, altrimenti --cache-from non popola/usa
       # nulla. Al primo giro il repo di cache è vuoto e la build prosegue.
       # Su pull_request il token è in sola lettura: si salta la scrittura cache.
+      # La cache vive nello stesso package dell'immagine (un package separato
+      # richiederebbe permessi extra) e la ripulisce il workflow `retention`.
+      #
+      # Niente --pull=newer: la base è pinnata per digest, quindi il re-resolve
+      # del tag non serve (e reintrodurrebbe non riproducibilità).
       - name: Build image
         env:
           PUSH_CACHE: ${{ github.event_name != 'pull_request' }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          DATE: ${{ steps.ver.outputs.date }}
+          SHA: ${{ steps.ver.outputs.sha }}
         run: |
+          set -euo pipefail
           cache_args=()
           if [ "$PUSH_CACHE" = "true" ]; then
             cache_args=(--cache-to "$IMAGE")
           fi
-          # --pull=newer: la base è un tag mutabile (fedora-silverblue:45); forzare
-          # il re-resolve garantisce che un nuovo digest della base busti la cache
-          # dei layer successivi (senza, i rebuild schedulati potrebbero riusare
-          # il layer dnf5 e non portare alcun pacchetto nuovo).
           podman build \
-            --pull=newer \
             --layers \
             --cache-from "$IMAGE" \
             "${cache_args[@]}" \
-            --build-arg "FEDORA_VERSION=${{ steps.ver.outputs.version }}" \
+            --build-arg "VERSION=$VERSION" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
-            --build-arg "VERSION=${{ steps.ver.outputs.version }}" \
-            -t "$IMAGE:${{ steps.ver.outputs.version }}" \
-            -t "$IMAGE:latest" .
+            -t "$IMAGE:$VERSION" \
+            -t "$IMAGE:latest" \
+            -t "$IMAGE:$VERSION-$DATE" \
+            -t "$IMAGE:$VERSION-$SHA" .
 
       - name: Smoke test image
         run: make smoke IMAGE="$IMAGE" TAG="${{ steps.ver.outputs.version }}"
 
+      # Tag: `45` e `latest` sono i canali mutabili (quello che segue
+      # `bootc upgrade`); `45-YYYYMMDD` e `45-<sha>` sono riferimenti comodi ma
+      # non immutabili: il primo viene ripushato a ogni build del giorno, il
+      # secondo a ogni rebuild dello stesso commit (il cron giornaliero). L'unico
+      # identificatore stabile è il digest.
+      # Il digest è lo stesso per tutti i tag: si firma e si pubblica quello.
+      # Ordine dei push: prima i riferimenti per data/sha, poi i canali. Se un
+      # push fallisce
+      # a metà, `45`/`latest` restano sulla build precedente (che è quella buona)
+      # invece di puntare a un'immagine pubblicata solo in parte.
       - name: Push image
+        id: push
         if: github.event_name != 'pull_request'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          DATE: ${{ steps.ver.outputs.date }}
+          SHA: ${{ steps.ver.outputs.sha }}
         run: |
-          podman push "$IMAGE:${{ steps.ver.outputs.version }}"
+          set -euo pipefail
+          podman push --digestfile "$RUNNER_TEMP/digest" "$IMAGE:$VERSION-$DATE"
+          podman push "$IMAGE:$VERSION-$SHA"
+          podman push "$IMAGE:$VERSION"
           podman push "$IMAGE:latest"
+          digest=$(cat "$RUNNER_TEMP/digest")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "digest inatteso: $digest" >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v4
+        with:
+          # Pinnato: la firma usa --new-bundle-format=false (formato legacy,
+          # quello che sanno verificare anche cosign e containers/image), flag
+          # deprecato che una futura major potrebbe rimuovere.
+          cosign-release: 'v3.1.4'
+
+      # Firma keyless: la identità è questo repository + questo workflow, e la
+      # firma finisce nel log pubblico di Sigstore (nessuna chiave da gestire).
+      # --new-bundle-format=false scrive la firma come tag OCI `sha256-<digest>.sig`
+      # invece che come artifact del referrers API: è il formato che capiscono
+      # anche `cosign verify` e containers/image (bootc). Su cosign v3 serve
+      # anche --use-signing-config=false: con la signing config TUF il formato
+      # legacy viene rifiutato se non si scrive anche un file bundle.
+      - name: Sign image
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: cosign sign --yes --use-signing-config=false --new-bundle-format=false "$IMAGE@$DIGEST"
+
+      - name: Verify signature
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign verify "$IMAGE@$DIGEST" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build.yml@${GITHUB_REF}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          DATE: ${{ steps.ver.outputs.date }}
+          SHA: ${{ steps.ver.outputs.sha }}
+          BASE: ${{ steps.ver.outputs.base }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            echo "### bootc-fedora $VERSION"
+            echo
+            echo '| | |'
+            echo '|---|---|'
+            echo "| immagine | \`$IMAGE@$DIGEST\` |"
+            echo "| tag | \`$VERSION\`, \`latest\`, \`$VERSION-$DATE\`, \`$VERSION-$SHA\` |"
+            echo "| base | \`$BASE\` |"
+            echo
+            echo "Pin sulla target: \`sudo bootc switch $IMAGE@$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

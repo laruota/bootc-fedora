@@ -1,11 +1,17 @@
 # Custom GNOME bootc image derived from Fedora Silverblue.
-# Bump Fedora: change FEDORA_VERSION below (used by make build/push); also update
-# the default TAG in scripts/push.sh and the tag in iso/interactive-defaults.ks.
-# Build: podman build --build-arg FEDORA_VERSION=45 -t localhost/bootc-fedora:latest .
+#
+# La base è pinnata per DIGEST (tag + digest nella riga FROM): lo stesso commit
+# produce sempre la stessa base, e un aggiornamento della base diventa un diff
+# esplicito e revertibile. Aggiornamento automatico: workflow `bump-base`
+# (giornaliero). Manuale:
+#   make base-digest                       # digest upstream del tag pinnato
+#   # poi sostituisci l'hash nella riga FROM
+# Bump di versione Fedora: cambia tag+digest nella riga FROM e il tag in
+# iso/interactive-defaults.ks (il Makefile verifica che coincidano).
+#
 # Base: official GNOME atomic bootc image (dnf5 + bootc included).
 
-ARG FEDORA_VERSION=45
-FROM quay.io/fedora/fedora-silverblue:${FEDORA_VERSION}
+FROM quay.io/fedora/fedora-silverblue:45@sha256:709d59831d7327a753ccc7bf3ce29d488bdf2ed85b6942146f317f602ff25a61
 
 # Build metadata (VERSION/SOURCE_COMMIT are passed by CI or the Makefile).
 ARG VERSION=dev

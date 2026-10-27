@@ -10,16 +10,20 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 2. **Test in VM** — `bcvk ephemeral run-ssh localhost/bootc-fedora`.
 3. **Pubblica su ghcr** — push su GitHub (CI) o `make push ORG=laruota`. Il package
    va reso **pubblico** per il pull anonimo usato dal deploy.
-4. **Prima installazione sulla target** — genera un'ISO con `image-builder`
-   (`bootc-generic-iso`; oppure un qcow2 per VM) e installa.
+4. **Prima installazione sulla target** — la via più corta è installare
+   Silverblue ufficiale e fare il rebase su questa immagine; in alternativa
+   genera un'ISO con `image-builder` (`bootc-generic-iso`) o un qcow2 per VM.
 5. **Aggiornamenti** — sulla target: `bootc switch` al tag desiderato, poi
    `bootc upgrade`.
+6. **Ripiego** — se qualcosa non va, la target si riporta a Silverblue stock con
+   `bootc switch`, senza reinstallare: vedi "Tornare a Silverblue".
 
 ## Contenuto
 
-- `Containerfile` — definizione dell'immagine (versione Fedora via `ARG FEDORA_VERSION`)
-- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso`
+- `Containerfile` — definizione dell'immagine (base Fedora pinnata per tag+digest nella riga `FROM`)
+- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso` / `make base-digest` / `make verify`
 - `scripts/setup.sh` — pacchetti da installare/rimuovere (aggiungi qui le tue utility)
+- `scripts/base-ref.sh` — legge la base pinnata dal `Containerfile` (`ref`, `version`, `digest`, `full`, `upstream`, `check`); usato da Makefile e workflow
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
 - `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato in `/usr/libexec/bootc-fedora` nell'immagine)
@@ -60,9 +64,14 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
 ## Build
 
-    make build                       # usa FEDORA_VERSION=45 di default
-    make build FEDORA_VERSION=44     # override
+    make build                       # builda la base pinnata nella riga FROM del Containerfile
+    make base-digest                 # pinnato vs upstream (richiede skopeo e jq; esce se il pin è indietro)
     make shellcheck                  # lint degli script shell
+
+La versione Fedora **non** è un `--build-arg`: è il tag della riga `FROM`
+(`quay.io/fedora/fedora-silverblue:45@sha256:…`), unica fonte di verità per
+build locale, CI e `make push`. Per provare un'altra versione si cambia quella
+riga (tag + digest), non un parametro.
 
 ## Test in VM
 
@@ -83,23 +92,126 @@ L'immagine contenitore NON contiene chiavi LUKS (la crittografia è creata in lo
 sulla target all'installazione).
 
 La GitHub Action `.github/workflows/build.yml` builda e pubblica su
-`ghcr.io/laruota/bootc-fedora:<FEDORA_VERSION>` (e `:latest`) a ogni push su `main`,
-con un **rebuild giornaliero** (`schedule`, 03:17 UTC) e su `workflow_dispatch`.
-Il rebuild periodico è necessario perché `bootc upgrade` sulla target scarica
-l'immagine puntata dal tag: senza ricostruzioni, aggiornamenti di kernel/RPM (es.
-VS Code) non arriverebbero mai. Entrambi sono tag **mutabili**: rappresentano il
-canale Fedora corrente, non una release immutabile. Il package su GitHub **deve essere pubblico** per il pull
-anonimo usato dal deploy (`bootc switch`): Packages → bootc-fedora → Settings →
-Change visibility. Se resta privato, serve il login (vedi sotto).
+`ghcr.io/laruota/bootc-fedora` a ogni push su `main`, con un **rebuild
+giornaliero** (`schedule`, 03:17 UTC) e su `workflow_dispatch`. Il rebuild
+periodico è necessario perché gli RPM arrivano dai repository *al momento della
+build*: senza ricostruzioni, `bootc upgrade` sulla target sarebbe un no-op e gli
+aggiornamenti (es. VS Code) non arriverebbero mai. Il package su GitHub **deve
+essere pubblico** per il pull anonimo usato dal deploy (`bootc switch`):
+Packages → bootc-fedora → Settings → Change visibility. Se resta privato, serve
+il login (vedi sotto).
 
-Build manuale (stesso risultato della CI):
+### Tag
+
+| Tag | Tipo | Uso |
+|---|---|---|
+| `:45` | mutabile | canale: è quello che segue `bootc upgrade` |
+| `:latest` | mutabile | alias dell'ultima build della versione corrente |
+| `:45-20261027` | riferimento per data | build di quel giorno (data UTC) |
+| `:45-1a2b3c4` | riferimento per commit | ultima build di quel commit |
+
+I tag mutabili servono al flusso quotidiano. I tag per data/commit sono comodi
+per riconoscere una build, ma **non sono immutabili**: `:45-<sha>` viene
+ripushato dal rebuild giornaliero dello stesso commit e `:45-<data>` a ogni
+build di quel giorno. L'unico identificatore stabile è il digest:
+
+    sudo bootc switch ghcr.io/laruota/bootc-fedora@sha256:<digest>
+
+Il digest esatto è nella summary del job di build (e lo stampa `make push`).
+
+### Base pinnata e aggiornamento
+
+La riga `FROM` del Containerfile è pinnata per **tag + digest**: lo stesso commit
+produce sempre la stessa base, e un aggiornamento della base diventa un diff
+esplicito, revertibile con `git revert`. Il workflow `bump-base` (ogni giorno,
+02:40 UTC) risolve il digest upstream e, se è cambiato, lo committa: il build
+delle 03:17 usa il pin nuovo. Bump manuale:
+
+    make base-digest                       # pinnato vs upstream
+    # poi aggiorna l'hash nella riga FROM
+
+Non c'è più `--pull=newer`: la base è fissata dal digest. Gli RPM invece restano
+quelli dei repository al momento della build (non c'è snapshot dei repo: la
+riproducibilità è "rispetto alla base", non bit-per-bit).
+
+### Firma
+
+Ogni build pubblicata è firmata con **cosign keyless**: la firma è legata a
+questo repository e a questo workflow tramite l'OIDC di GitHub Actions (nessuna
+chiave da custodire) e finisce nel log pubblico di Sigstore. Serve a verificare
+che l'immagine venga da questo repo, non a impedirne l'installazione.
+
+L'enforcement sulla target (`--enforce-container-sigpolicy`) **non** è
+configurato: richiederebbe una firma con chiave. Se un giorno serve, si aggiunge
+un secret `SIGNING_SECRET` e il `policy.json` sulla target, senza cambiare il
+resto del flusso.
+
+Verifica da qualsiasi macchina:
+
+    make verify                     # richiede cosign nel PATH
+    cosign verify ghcr.io/laruota/bootc-fedora:45 \
+      --certificate-identity https://github.com/laruota/bootc-fedora/.github/workflows/build.yml@refs/heads/main \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+### Retention
+
+Le versioni vecchie su GHCR **non** vengono cancellate da GitHub. Il workflow
+`retention.yml` (domenica, 04:23 UTC) tiene le 210 versioni più recenti (≈ 1–2
+mesi con la cadenza attuale, cache di build compresa). I canali `45` e `latest`
+sono sempre dentro la finestra perché puntano alla build più recente; un canale
+vecchio (es. `44`) sparisce quando invecchia oltre le 210 versioni. Il package è
+pubblico, quindi storage e banda sono gratuiti: la pulizia serve a tenerlo
+leggibile (e a non pagare se un giorno diventasse privato). Se l'action fallisce
+con 403, il repo non ha il ruolo Admin sul package: passare un PAT con
+`delete:packages` al suo posto.
+
+Build manuale (stesso risultato della CI, ma **senza firma**: la firma la fa
+solo il workflow):
 
     make push ORG=laruota              # oppure: ./scripts/push.sh laruota
     podman pull ghcr.io/laruota/bootc-fedora:45   # verifica pull anonimo
 
 ## Prima installazione sulla target
 
-### ISO (consigliato per il portatile)
+### Da Silverblue ufficiale, senza ISO
+
+Se la macchina ha rete, l'ISO non serve: si installa Silverblue 45 ufficiale e
+poi si passa a questa immagine con un rebase (la base è la stessa, quindi si
+scarica solo il delta e `/home`/`/var` non si toccano).
+
+```bash
+# che cosa gestisce il sistema appena installato?
+bootc status
+
+# caso classico dell'ISO ufficiale: backend rpm-ostree
+sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/laruota/bootc-fedora:45
+
+# se invece il sistema è già gestito da bootc
+sudo bootc switch ghcr.io/laruota/bootc-fedora:45
+
+sudo systemctl reboot
+```
+
+Da sapere:
+
+- **Aggiornamenti**: comanda il backend installato → `rpm-ostree upgrade` se sei
+  rimasto su rpm-ostree, `bootc upgrade` se il sistema è bootc. Su Fedora 45 i
+  due convivono, ma non sono intercambiabili per il timer automatico; per capire
+  quale gira:
+  `systemctl status bootc-fetch-apply-updates.timer rpm-ostreed-automatic.timer`.
+- **kargs `rhgb quiet`** (prompt LUKS grafico): vengono da
+  `/usr/lib/bootc/kargs.d/00-desktop.toml`. Se dopo il riavvio non ci sono
+  (`cat /proc/cmdline`), aggiungili:
+  `sudo rpm-ostree kargs --append=rhgb --append=quiet`.
+- **La config btrfs** in `/usr/lib/bootc/install/` vale solo per `bootc install`,
+  non per un rebase: partizioni e LUKS restano quelli creati dall'installer.
+- **Vantaggio**: il primo deployment resta Silverblue stock, quindi hai un
+  rollback immediato (voce GRUB o `rpm-ostree rollback`) senza scaricare nulla.
+
+L'ISO resta utile per installazioni **offline**, per installare un **digest
+pinnato** e per preparare più macchine allo stesso modo.
+
+### ISO (offline o install ripetibile)
 
 Si usa **osbuild `image-builder`** con il tipo **`bootc-generic-iso`**: prende un
 container "installer" e lo "esplode" in un'ISO avviabile **senza dnf/depsolve**
@@ -159,6 +271,49 @@ Installazione con **disco criptato (LUKS)**:
 - **Passphrase (come Workstation)**: usa l'ISO con kickstart precedente, oppure spunta
   la crittografia durante l'installazione Anaconda.
 
+## Tornare a Silverblue (senza reinstallare)
+
+Il sistema installato è **bootc**: cambiare immagine è un rebase in place, non
+una reinstallazione. `/home` e `/var` (flatpak, container, dati) restano; `/usr`
+viene sostituito in blocco; `/etc` viene rifuso in merge a 3 vie.
+
+    # verso Silverblue stock
+    sudo bootc switch quay.io/fedora/fedora-silverblue:45
+    sudo reboot
+
+    # e per tornare alla tua immagine
+    sudo bootc switch ghcr.io/laruota/bootc-fedora:45
+    sudo reboot
+
+Il download è solo il delta (la base è la stessa), quindi pochi minuti e qualche
+centinaio di MB. Se invece il problema è il deployment *nuovo* (non la rete),
+basta il rollback, che non scarica nulla:
+
+    sudo bootc rollback --apply    # oppure la voce di rollback nel menu GRUB
+
+Il rollback riordina i deployment esistenti: `/etc` torna allo stato di quello
+precedente (le modifiche fatte dopo non si portano dietro). bootc tiene due
+deployment (corrente + precedente).
+
+Cosa resta da sistemare dopo il ritorno a Silverblue stock, perché vive in `/etc`
+e quindi sopravvive al cambio:
+
+    # 1. shell di default: zsh non c'è su Silverblue stock
+    sudo sed -i 's|^SHELL=.*|SHELL=/bin/bash|' /etc/default/useradd
+    # 2. editor: punta a nvim, che non c'è
+    sudo rm -f /etc/profile.d/50-editor.sh
+    # 3. kargs rhgb/quiet: arrivano da /usr/lib/bootc/kargs.d, quindi spariscono
+    #    (servono per il prompt LUKS grafico)
+    sudo rpm-ostree kargs --append=rhgb --append=quiet
+
+`LANG=it_IT.UTF-8` e `localtime` restano: sono impostazioni tue, non della base.
+
+**Limite**: `bootc switch` richiede un sistema avviato. Se l'immagine non parte
+affatto (installer, kernel, bootloader) resta il rollback da GRUB se esiste il
+deployment precedente, altrimenti la ISO. Per questo conviene provare l'immagine
+in VM (`bcvk`, sopra) e fare un rehearsal dello switch appena installato: così
+sai già che la via di fuga funziona e quanto ci mette.
+
 ## Prompt grafico LUKS e SELinux
 
 Con root cifrata la passphrase può essere chiesta da plymouth (GUI) oppure in
@@ -190,7 +345,9 @@ già installata con `selinux=0`:
 
 - L'immagine è pubblicata su `ghcr.io/laruota/bootc-fedora`: ogni push su `main`,
   il rebuild giornaliero (03:17 UTC) o `workflow_dispatch` ricostruisce e pubblica
-  una nuova immagine; la target la riceve con `bootc upgrade` dopo `bootc switch`.
+  una nuova immagine con tag mutabili (`45`, `latest`) e riferimenti (`45-<data>`,
+  `45-<sha>`), firmata con cosign; la target la riceve con `bootc upgrade` dopo
+  `bootc switch`.
 - **App GNOME**: papers, loupe, gnome-calendar, ecc. NON sono nell'immagine — sono
   flatpak installati sulla target via GNOME Software. `bootstrap-flatpaks.sh` aggiunge
   e verifica il remote **Flathub completo** (Chrome e app proprietarie); non aggiunge
@@ -204,7 +361,9 @@ già installata con `selinux=0`:
 - **cups**: tenuto il server (stampante anche USB passa da cupsd); cups-client è già presente.
 - **nmcli**: presente (fa parte di NetworkManager).
 - La pulizia font è sperimentale: verificarne l'effetto in VM prima di fidarsene.
-- Bump di versione Fedora: `ARG FEDORA_VERSION` nel `Containerfile` (usato da `make build`/`make push`), più il default `TAG` in `scripts/push.sh` e il tag in `iso/interactive-defaults.ks`.
+- Bump di versione Fedora: riga `FROM` del `Containerfile` (tag **e** digest),
+  più il tag in `iso/interactive-defaults.ks` (il Makefile controlla che
+  coincidano). Il digest è mantenuto aggiornato dal workflow `bump-base`.
 
 ## Licenza
 

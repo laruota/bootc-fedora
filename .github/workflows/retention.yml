@@ -1,0 +1,54 @@
+name: retention
+
+# Igiene del package su GHCR. GHCR non cancella le versioni vecchie da solo: ogni
+# rebuild giornaliero aggiunge versioni (tag per data/sha, canali e cache di
+# buildah), che restano finché non vengono eliminate.
+#
+# Il package è pubblico, quindi storage e banda sono gratuiti: questa pulizia
+# non serve a risparmiare oggi, serve a tenere il package leggibile e a non
+# trovarsi con centinaia di GB se un giorno diventasse privato (500 MB gratis,
+# poi ~0,25 $/GB/mese).
+#
+# Regola: tieni le 210 versioni più recenti (≈ 1–2 mesi con la cadenza attuale:
+# ~5 versioni per build fra tag, canali e cache). I canali `45` e `latest`
+# puntano sempre alla build più recente, quindi sono sempre dentro la finestra;
+# un canale vecchio (es. `44`) viene eliminato quando invecchia oltre le 210.
+on:
+  schedule:
+    - cron: '23 4 * * 0'   # domenica, dopo il build giornaliero
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: retention
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      # L'action cancella al massimo 100 versioni per run: col backlog attuale
+      # servono un paio di giri settimanali per andare a regime.
+      # Niente `ignore-versions`: per i package container il "version name" è il
+      # digest del manifest, non il tag, quindi un filtro sui tag non farebbe
+      # nulla (i canali sono protetti dal fatto di essere i più recenti).
+      # Se fallisce con 403, il repo non ha il ruolo Admin sul package: in quel
+      # caso passare un PAT con `delete:packages` (vedi README).
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: bootc-fedora
+          package-type: container
+          min-versions-to-keep: 210
+
+      - name: Summary
+        run: |
+          {
+            echo "### retention"
+            echo
+            echo "- package: \`bootc-fedora\`"
+            echo "- mantenute: 210 versioni più recenti (≈ 1–2 mesi)"
+            echo "- i canali \`45\` e \`latest\` sono sempre inclusi: puntano alla build più recente"
+          } >> "$GITHUB_STEP_SUMMARY"

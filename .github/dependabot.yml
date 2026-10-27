@@ -1,0 +1,14 @@
+version: 2
+
+# Aggiornamento delle GitHub Actions usate dai workflow. La base dell'immagine
+# non è gestita qui: la pinna/aggiorna il workflow `bump-base` (il Containerfile
+# non è un Dockerfile, e comunque il pin per digest lo gestiamo noi).
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies

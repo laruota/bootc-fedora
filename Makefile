@@ -1,25 +1,41 @@
 # Build/publish helper for the bootc-fedora image.
 # Override on the command line, e.g.:
-#   make build FEDORA_VERSION=44
+#   make build
 #   make push ORG=my-org
 
-# Default Fedora version: ARG FEDORA_VERSION in the Containerfile (override with
-# `make build FEDORA_VERSION=X` for one-offs). When bumping, also update the
-# default TAG in scripts/push.sh and the tag in iso/interactive-defaults.ks.
-FEDORA_VERSION ?= $(shell sed -n 's/^ARG FEDORA_VERSION=//p' Containerfile)
+# Unica fonte di verità: la riga FROM del Containerfile (tag@digest), letta da
+# scripts/base-ref.sh. Non è sovrascrivibile: `make build FEDORA_VERSION=46`
+# etichetterebbe come 46 un'immagine basata sulla base pinnata (45).
+# Bump di versione Fedora = cambio della riga FROM e del tag in
+# iso/interactive-defaults.ks.
+override FEDORA_VERSION := $(shell scripts/base-ref.sh version 2>/dev/null)
 IMAGE          ?= localhost/bootc-fedora
 INSTALLER_IMAGE ?= localhost/bootc-fedora-installer
 BUILDER_IMAGE  ?= ghcr.io/osbuild/image-builder-cli:latest
 TAG            ?= latest
 ORG            ?=
 SHELLCHECK_IMAGE ?= docker.io/koalaman/shellcheck-alpine:v0.11.0
+IMAGE_REPO     ?= ghcr.io/$(if $(ORG),$(ORG),laruota)/bootc-fedora
+# Branch da cui parte la build firmata: serve all'identità del certificato
+# keyless verificata da `make verify`.
+MAIN_REF       ?= refs/heads/main
 
-.PHONY: build lint shellcheck smoke push installer iso clean
+.PHONY: build lint shellcheck smoke push installer iso clean base-digest verify check-iso-ref require-version
+
+# Se la versione non si riesce a leggere dalla riga FROM (base non pinnata),
+# i target che la usano si fermano: meglio di un'immagine con VERSION vuota.
+require-version:
+	@test -n "$(FEDORA_VERSION)" || { \
+	  echo "impossibile leggere la versione dalla riga FROM del Containerfile" >&2; \
+	  echo "la base è pinnata per digest? (tag@sha256:...)" >&2; \
+	  exit 1; \
+	}
 
 # Build the image. `bootc container lint` runs at the end of the Containerfile,
-# so a successful build already means the image is validated.
-build:
-	podman build --build-arg FEDORA_VERSION=$(FEDORA_VERSION) \
+# so a successful build already means the image is validated. La base è pinnata
+# per digest: nessun `--pull=newer`, la build è riproducibile rispetto alla base.
+build: require-version
+	podman build \
 	    --build-arg "VERSION=$(FEDORA_VERSION)" \
 	    --build-arg "SOURCE_COMMIT=$$(git rev-parse HEAD 2>/dev/null)" \
 	    -t $(IMAGE):$(TAG) .
@@ -49,17 +65,44 @@ smoke:
 	    if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
 
 # Tag and push to ghcr.io via scripts/push.sh. Requires `podman login ghcr.io` once.
-push:
+push: require-version
 	@test -n "$(ORG)" || { echo "usage: make push ORG=<your-org>"; exit 1; }
 	./scripts/push.sh $(ORG) $(FEDORA_VERSION) $(IMAGE) $(TAG)
+
+# Confronta il digest pinnato nel Containerfile con quello upstream del tag.
+# Serve per il bump manuale (il workflow bump-base lo fa da solo ogni giorno).
+# Esce con errore se i due digest differiscono.
+base-digest:
+	@scripts/base-ref.sh check
+
+# Verifica la firma keyless dell'immagine pubblicata (richiede cosign nel PATH).
+# Identità esatta: quel workflow su main, non "qualunque workflow del repo".
+verify:
+	@org=$$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/[^/]+/?$$#\1#; s#\.git$$##'); \
+	 cosign verify $(IMAGE_REPO):$(TAG) \
+	   --certificate-identity "https://github.com/$$org/bootc-fedora/.github/workflows/build.yml@$(MAIN_REF)" \
+	   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Build the installer container (OS + Anaconda + ISO tools) used by image-builder.
 # Built rootless from the local image, then loaded into root storage, because
 # image-builder runs as root and reads /var/lib/containers/storage.
-installer:
+installer: require-version check-iso-ref
 	podman build --build-arg BOOTC_IMAGE=$(IMAGE):$(TAG) \
 	    -t $(INSTALLER_IMAGE):$(TAG) iso/
 	bash -o pipefail -c 'podman save $(INSTALLER_IMAGE):$(TAG) | sudo podman load'
+
+# L'ISO installa il ref scritto in iso/interactive-defaults.ks: se non coincide
+# con la versione del Containerfile si installerebbe una release diversa da
+# quella appena buildata. Meglio fermarsi con un messaggio chiaro.
+check-iso-ref:
+	@want=$(FEDORA_VERSION); \
+	 found=$$(grep -E '^[[:space:]]*bootc[[:space:]]' iso/interactive-defaults.ks | grep -o 'bootc-fedora:[0-9][0-9]*' | sed 's/.*://' | sort -u); \
+	 [ "$$found" = "$$want" ] || { \
+	   echo "iso/interactive-defaults.ks punta a: $$found" >&2; \
+	   echo "il Containerfile è alla versione: $${want:-?}" >&2; \
+	   echo "allinea il tag in iso/interactive-defaults.ks prima di buildare l'ISO" >&2; \
+	   exit 1; \
+	 }
 
 # Build the installer ISO using the official osbuild image-builder CONTAINER
 # (no host install needed). bootc-generic-iso "explodes" the container, so it
