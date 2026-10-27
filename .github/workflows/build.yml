@@ -154,7 +154,8 @@ jobs:
 
       - name: Install cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v4
+        # Il repo non mantiene un tag mobile `v4`: va usata la versione esatta.
+        uses: sigstore/cosign-installer@v4.1.2
         with:
           # Pinnato: la firma usa --new-bundle-format=false (formato legacy,
           # quello che sanno verificare anche cosign e containers/image), flag
