@@ -20,10 +20,10 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
 ## Contenuto
 
-- `Containerfile` — definizione dell'immagine (base Fedora pinnata per tag+digest nella riga `FROM`)
-- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso` / `make base-digest` / `make verify`
+- `Containerfile` — definizione dell'immagine (base Fedora `45` nella riga `FROM`)
+- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso` / `make verify`
 - `scripts/setup.sh` — pacchetti da installare/rimuovere (aggiungi qui le tue utility)
-- `scripts/base-ref.sh` — legge la base pinnata dal `Containerfile` (`ref`, `version`, `digest`, `full`, `upstream`, `check`); usato da Makefile e workflow
+- `scripts/base-ref.sh` — legge la base dal `Containerfile` (`ref`, `version`); usato da Makefile e workflow
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
 - `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato in `/usr/libexec/bootc-fedora` nell'immagine)
@@ -49,7 +49,7 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
    sulla target con `/usr/libexec/bootc-fedora/bootstrap-python.sh` eseguito dall'utente che
    usa gli script (pip `--user --break-system-packages`; non usare `sudo`).
 - Install con `install_weak_deps=False`: non vengono trascinate dipendenze deboli
-  (nodejs22/npm, gcc, xsel, evince-djvu, snapper, btrfsmaintenance, tree-sitter-cli, ...);
+  (gcc, xsel, evince-djvu, snapper, btrfsmaintenance, tree-sitter-cli, ...);
   niente ansible (usato via toolbox).
 - Rimossi: vim (→ neovim, con `vi` che punta a nvim), gnome-tour, ibus-* non usati (anthy/hangul/m17n/typing-booster/pinyin),
   NetworkManager-adsl, evolution-ews (+ core/langpacks), gnome-shell-extension-background-logo, malcontent-control,
@@ -64,14 +64,14 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 
 ## Build
 
-    make build                       # builda la base pinnata nella riga FROM del Containerfile
-    make base-digest                 # pinnato vs upstream (richiede skopeo e jq; esce se il pin è indietro)
+    make build                       # builda la base del tag nella riga FROM del Containerfile
     make shellcheck                  # lint degli script shell
 
 La versione Fedora **non** è un `--build-arg`: è il tag della riga `FROM`
-(`quay.io/fedora/fedora-silverblue:45@sha256:…`), unica fonte di verità per
-build locale, CI e `make push`. Per provare un'altra versione si cambia quella
-riga (tag + digest), non un parametro.
+(`quay.io/fedora/fedora-silverblue:45`), unica fonte di verità per build locale,
+CI e `make push`. Per provare un'altra versione si cambia quel tag, non un
+parametro. `make build` usa `--pull=newer`, così non riusa una base vecchia
+dalla cache locale.
 
 ## Test in VM
 
@@ -119,26 +119,24 @@ build di quel giorno. L'unico identificatore stabile è il digest:
 
 Il digest esatto è nella summary del job di build (e lo stampa `make push`).
 
-### Base pinnata e aggiornamento
+### Base e aggiornamento
 
-La riga `FROM` del Containerfile è pinnata per **tag + digest**: lo stesso commit
-produce sempre la stessa base, e un aggiornamento della base diventa un diff
-esplicito, revertibile con `git revert`. Il workflow `bump-base` (ogni giorno,
-02:40 UTC) risolve il digest upstream e, se è cambiato, lo committa: il build
-delle 03:17 usa il pin nuovo. Bump manuale:
+La riga `FROM` usa il **tag mobile** `quay.io/fedora/fedora-silverblue:45`: a ogni
+rebuild (giornaliero, 03:17 UTC) si prendono la base e gli RPM correnti. Non c'è
+pin per digest: quay.io elimina i manifest vecchi a ogni compose (≈ ogni giorno),
+quindi un pin smetterebbe di risolvere con `manifest unknown`; e la build non
+sarebbe comunque riproducibile bit-per-bit, perché gli RPM non sono pinnati.
 
-    make base-digest                       # pinnato vs upstream
-    # poi aggiorna l'hash nella riga FROM
+Per la tracciabilità, la CI risolve il digest della base al momento della build e
+lo scrive nelle label OCI dell'immagine (`org.opencontainers.image.base.name` e
+`org.opencontainers.image.base.digest`); si leggono con:
 
-Non c'è più `--pull=newer`: la base è fissata dal digest. Gli RPM invece restano
-quelli dei repository al momento della build (non c'è snapshot dei repo: la
-riproducibilità è "rispetto alla base", non bit-per-bit).
+    podman image inspect ghcr.io/laruota/bootc-fedora:45
 
-Il pin vale finché quel manifest esiste sul registry: quando Fedora ricompone
-Silverblue, quay.io può eliminare i manifest vecchi e una build da un commit
-datato fallirebbe con `manifest unknown`. In quel caso si allinea il pin
-(`bump-base`, o `make base-digest` + modifica dell'hash) e si ricostruisce: le
-immagini già pubblicate su GHCR restano comunque intatte.
+Se serve **bloccare temporaneamente** una base (es. regressione upstream), si
+sostituisce il tag con `quay.io/fedora/fedora-silverblue:45@sha256:…` nella riga
+`FROM`, sapendo che quel pin vale solo fino alla compose successiva: per questo
+non è il funzionamento normale.
 
 ### Firma
 
@@ -367,9 +365,8 @@ già installata con `selinux=0`:
 - **cups**: tenuto il server (stampante anche USB passa da cupsd); cups-client è già presente.
 - **nmcli**: presente (fa parte di NetworkManager).
 - La pulizia font è sperimentale: verificarne l'effetto in VM prima di fidarsene.
-- Bump di versione Fedora: riga `FROM` del `Containerfile` (tag **e** digest),
-  più il tag in `iso/interactive-defaults.ks` (il Makefile controlla che
-  coincidano). Il digest è mantenuto aggiornato dal workflow `bump-base`.
+- Bump di versione Fedora: tag nella riga `FROM` del `Containerfile` più il tag
+  in `iso/interactive-defaults.ks` (il Makefile controlla che coincidano).
 
 ## Licenza
 

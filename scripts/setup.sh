@@ -5,7 +5,7 @@ set -euo pipefail
 
 # --- Install packages -------------------------------------------------------
 # install_weak_deps=False: evita che Recommends trascinino pacchetti che
-# rimuoveremmo subito dopo (gcc, nodejs22, xsel, evince-djvu, snapper, ...).
+# rimuoveremmo subito dopo (gcc, xsel, evince-djvu, snapper, ...).
 # I pochi utili vengono aggiunti esplicitamente sotto.
 dnf5 install -y --setopt=install_weak_deps=False \
     android-tools \
@@ -61,7 +61,6 @@ fi
 #   - malcontent-control: standalone parental-controls GUI
 #     (the "malcontent" core stays: hard dep of gnome-control-center,
 #      removing it cascades into gnome-shell and the whole desktop)
-#   - nodejs22 (+ npm): nothing requires it, saved ~169 MiB
 #   - xsel: orfano (nessuno lo usa)
 #   - gcc/glibc-devel/kernel-headers/libxcrypt-devel: compile toolchain,
 #     unused on an immutable system (use toolbox/distrobox to compile)
@@ -71,7 +70,6 @@ REMOVE=(
     NetworkManager-adsl evolution-ews evolution-ews-core evolution-ews-langpacks
     gnome-shell-extension-background-logo
     malcontent-control
-    nodejs22
     xsel
     gcc glibc-devel kernel-headers libxcrypt-devel
 )

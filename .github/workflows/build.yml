@@ -31,9 +31,8 @@ on:
   # l'immagine puntata dal tag: senza una ricostruzione periodica, gli RPM
   # aggiornati nei repo (kernel a parte, che viene dalla base) non arrivano mai
   # (l'upgrade sarebbe un no-op). 03:17 UTC = fascia non di punta, minuto non
-  # "tondo" per evitare i ritardi di GitHub sugli orari in punto. La base è
-  # pinnata per digest e viene aggiornata 37 minuti prima dal workflow
-  # `bump-base`: questo build raccoglie il pin nuovo.
+  # "tondo" per evitare i ritardi di GitHub sugli orari in punto. La base segue
+  # il tag mobile `45`: ogni build prende base e RPM correnti.
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -61,19 +60,31 @@ jobs:
       - name: ShellCheck scripts
         run: make shellcheck
 
-      # Unica fonte di verità: la riga FROM del Containerfile (tag + digest),
-      # letta da scripts/base-ref.sh. Se non è pinnata per digest lo script
-      # esce: meglio un errore chiaro che una build non riproducibile.
+      # Unica fonte di verità: la riga FROM del Containerfile, letta da
+      # scripts/base-ref.sh (tag mobile della release).
       - name: Resolve version, date and base
         id: ver
         run: |
           set -euo pipefail
           version=$(scripts/base-ref.sh version)
-          base=$(scripts/base-ref.sh full)
+          base=$(scripts/base-ref.sh ref)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Tracciabilità senza pin: il digest della base effettivamente usata
+      # finisce nelle label OCI dell'immagine (podman image inspect).
+      - name: Resolve base digest
+        id: base
+        run: |
+          set -euo pipefail
+          base='${{ steps.ver.outputs.base }}'
+          podman pull -q "$base" >/dev/null
+          digest=$(podman image inspect --format '{{.Digest}}' "$base")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "digest base inatteso: $digest" >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "base: $base@$digest"
 
       # podman è già preinstallato sui runner ubuntu-latest.
       # La login viene scritta anche in ~/.docker/config.json perché cosign usa
@@ -97,14 +108,15 @@ jobs:
       # La cache vive nello stesso package dell'immagine (un package separato
       # richiederebbe permessi extra) e la ripulisce il workflow `retention`.
       #
-      # Niente --pull=newer: la base è pinnata per digest, quindi il re-resolve
-      # del tag non serve (e reintrodurrebbe non riproducibilità).
+      # --pull=newer: la base è un tag mobile, va risolta a ogni build.
       - name: Build image
         env:
           PUSH_CACHE: ${{ github.event_name != 'pull_request' }}
           VERSION: ${{ steps.ver.outputs.version }}
           DATE: ${{ steps.ver.outputs.date }}
           SHA: ${{ steps.ver.outputs.sha }}
+          BASE: ${{ steps.ver.outputs.base }}
+          BASE_DIGEST: ${{ steps.base.outputs.digest }}
         run: |
           set -euo pipefail
           cache_args=()
@@ -112,9 +124,12 @@ jobs:
             cache_args=(--cache-to "$IMAGE")
           fi
           podman build \
+            --pull=newer \
             --layers \
             --cache-from "$IMAGE" \
             "${cache_args[@]}" \
+            --label "org.opencontainers.image.base.name=$BASE" \
+            --label "org.opencontainers.image.base.digest=$BASE_DIGEST" \
             --build-arg "VERSION=$VERSION" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
             -t "$IMAGE:$VERSION" \
@@ -192,6 +207,7 @@ jobs:
           DATE: ${{ steps.ver.outputs.date }}
           SHA: ${{ steps.ver.outputs.sha }}
           BASE: ${{ steps.ver.outputs.base }}
+          BASE_DIGEST: ${{ steps.base.outputs.digest }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           {
@@ -201,7 +217,7 @@ jobs:
             echo '|---|---|'
             echo "| immagine | \`$IMAGE@$DIGEST\` |"
             echo "| tag | \`$VERSION\`, \`latest\`, \`$VERSION-$DATE\`, \`$VERSION-$SHA\` |"
-            echo "| base | \`$BASE\` |"
+            echo "| base | \`$BASE@$BASE_DIGEST\` |"
             echo
             echo "Pin sulla target: \`sudo bootc switch $IMAGE@$DIGEST\`"
           } >> "$GITHUB_STEP_SUMMARY"

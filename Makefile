@@ -3,9 +3,9 @@
 #   make build
 #   make push ORG=my-org
 
-# Unica fonte di verità: la riga FROM del Containerfile (tag@digest), letta da
+# Unica fonte di verità: la riga FROM del Containerfile, letta da
 # scripts/base-ref.sh. Non è sovrascrivibile: `make build FEDORA_VERSION=46`
-# etichetterebbe come 46 un'immagine basata sulla base pinnata (45).
+# etichetterebbe come 46 un'immagine basata sulla base 45.
 # Bump di versione Fedora = cambio della riga FROM e del tag in
 # iso/interactive-defaults.ks.
 override FEDORA_VERSION := $(shell scripts/base-ref.sh version 2>/dev/null)
@@ -20,22 +20,22 @@ IMAGE_REPO     ?= ghcr.io/$(if $(ORG),$(ORG),laruota)/bootc-fedora
 # keyless verificata da `make verify`.
 MAIN_REF       ?= refs/heads/main
 
-.PHONY: build lint shellcheck smoke push installer iso clean base-digest verify check-iso-ref require-version
+.PHONY: build lint shellcheck smoke push installer iso clean verify check-iso-ref require-version
 
-# Se la versione non si riesce a leggere dalla riga FROM (base non pinnata),
-# i target che la usano si fermano: meglio di un'immagine con VERSION vuota.
+# Se la versione non si riesce a leggere dalla riga FROM, i target che la usano
+# si fermano: meglio di un'immagine con VERSION vuota.
 require-version:
 	@test -n "$(FEDORA_VERSION)" || { \
-	  echo "impossibile leggere la versione dalla riga FROM del Containerfile" >&2; \
-	  echo "la base è pinnata per digest? (tag@sha256:...)" >&2; \
+	  echo "impossibile leggere la versione Fedora dalla riga FROM del Containerfile" >&2; \
 	  exit 1; \
 	}
 
 # Build the image. `bootc container lint` runs at the end of the Containerfile,
-# so a successful build already means the image is validated. La base è pinnata
-# per digest: nessun `--pull=newer`, la build è riproducibile rispetto alla base.
+# so a successful build already means the image is validated. La base è un tag
+# mobile: --pull=newer evita di riusare una base vecchia dalla cache locale.
 build: require-version
 	podman build \
+	    --pull=newer \
 	    --build-arg "VERSION=$(FEDORA_VERSION)" \
 	    --build-arg "SOURCE_COMMIT=$$(git rev-parse HEAD 2>/dev/null)" \
 	    -t $(IMAGE):$(TAG) .
@@ -68,12 +68,6 @@ smoke:
 push: require-version
 	@test -n "$(ORG)" || { echo "usage: make push ORG=<your-org>"; exit 1; }
 	./scripts/push.sh $(ORG) $(FEDORA_VERSION) $(IMAGE) $(TAG)
-
-# Confronta il digest pinnato nel Containerfile con quello upstream del tag.
-# Serve per il bump manuale (il workflow bump-base lo fa da solo ogni giorno).
-# Esce con errore se i due digest differiscono.
-base-digest:
-	@scripts/base-ref.sh check
 
 # Verifica la firma keyless dell'immagine pubblicata (richiede cosign nel PATH).
 # Identità esatta: quel workflow su main, non "qualunque workflow del repo".

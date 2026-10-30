@@ -1,17 +1,15 @@
 # Custom GNOME bootc image derived from Fedora Silverblue.
 #
-# La base è pinnata per DIGEST (tag + digest nella riga FROM): lo stesso commit
-# produce sempre la stessa base, e un aggiornamento della base diventa un diff
-# esplicito e revertibile. Aggiornamento automatico: workflow `bump-base`
-# (giornaliero). Manuale:
-#   make base-digest                       # digest upstream del tag pinnato
-#   # poi sostituisci l'hash nella riga FROM
-# Bump di versione Fedora: cambia tag+digest nella riga FROM e il tag in
+# La base segue il tag mobile `45` (niente pin per digest): ogni rebuild prende
+# la base corrente insieme agli RPM dei repo. Un pin per digest non sarebbe
+# riproducibile comunque (gli RPM non sono pinnati) e quay elimina i manifest
+# vecchi a ogni compose, quindi smetterebbe di risolvere nel giro di un giorno.
+# Bump di versione Fedora: il tag nella riga FROM e il tag in
 # iso/interactive-defaults.ks (il Makefile verifica che coincidano).
 #
 # Base: official GNOME atomic bootc image (dnf5 + bootc included).
 
-FROM quay.io/fedora/fedora-silverblue:45@sha256:dc1f19d81219cca21a5e16ff461bbe16523ced7a45e3fbf3737101fe12bd2455
+FROM quay.io/fedora/fedora-silverblue:45
 
 # Build metadata (VERSION/SOURCE_COMMIT are passed by CI or the Makefile).
 ARG VERSION=dev

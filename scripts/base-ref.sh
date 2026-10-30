@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# Unica implementazione della lettura della base pinnata nel Containerfile.
-# Usata da Makefile, .github/workflows/build.yml e bump-base.yml, così il
-# formato della riga FROM è definito in un posto solo.
+# Legge la base dal Containerfile. Unica implementazione del parsing della riga
+# FROM, usata da Makefile, workflow e scripts/push.sh.
 #
-# Uso: scripts/base-ref.sh {ref|version|digest|full|upstream|check}
+# La riga FROM usa il tag mobile della release:
+#   FROM quay.io/fedora/fedora-silverblue:45
+# È accettata anche la forma pinnata a mano (tag@sha256:…): il digest viene
+# ignorato nella lettura, così lo script continua a funzionare.
+#
+# Uso: scripts/base-ref.sh {ref|version}
 #   ref      quay.io/fedora/fedora-silverblue:45
 #   version  45
-#   digest   sha256:…  (quello pinnato nel Containerfile)
-#   full     ref@digest
-#   upstream digest attuale del tag sul registry (richiede skopeo + jq)
-#   check    confronta pinnato e upstream; esce 1 se diversi
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 containerfile="${CONTAINERFILE:-$root/Containerfile}"
 
-ref=$(sed -n 's|^FROM \(quay.io/fedora/fedora-silverblue:[0-9][0-9]*\)@sha256:[0-9a-f]\{64\}.*|\1|p' "$containerfile")
-digest=$(sed -n 's|^FROM quay.io/fedora/fedora-silverblue:[0-9][0-9]*@\(sha256:[0-9a-f]\{64\}\).*|\1|p' "$containerfile")
+raw=$(sed -n 's|^FROM \([^[:space:]]*\).*|\1|p' "$containerfile")
+ref=${raw%%@*}
+version=${ref##*:}
 
 die() {
     echo "$*" >&2
@@ -25,37 +26,18 @@ die() {
 
 case "${1:-}" in
     ref)
-        [ -n "$ref" ] || die "Containerfile: riga FROM della base non pinnata per digest (tag@sha256:...)"
-        echo "$ref"
+        case "$ref" in
+            */fedora-silverblue:*) echo "$ref" ;;
+            *) die "Containerfile: riga FROM della base non trovata (atteso <registry>/fedora-silverblue:<versione>)" ;;
+        esac
         ;;
     version)
-        [ -n "$ref" ] || die "Containerfile: riga FROM della base non pinnata per digest (tag@sha256:...)"
-        echo "${ref##*:}"
-        ;;
-    digest)
-        [ -n "$digest" ] || die "Containerfile: digest della base non trovato nella riga FROM"
-        echo "$digest"
-        ;;
-    full)
-        [ -n "$ref" ] && [ -n "$digest" ] || die "Containerfile: riga FROM della base non pinnata per digest (tag@sha256:...)"
-        echo "$ref@$digest"
-        ;;
-    upstream)
-        [ -n "$ref" ] || die "Containerfile: riga FROM della base non pinnata per digest (tag@sha256:...)"
-        command -v skopeo >/dev/null || die "skopeo non trovato nel PATH"
-        command -v jq >/dev/null || die "jq non trovato nel PATH"
-        skopeo inspect --no-tags "docker://$ref" | jq -r .Digest
-        ;;
-    check)
-        [ -n "$ref" ] && [ -n "$digest" ] || die "Containerfile: riga FROM della base non pinnata per digest (tag@sha256:...)"
-        command -v skopeo >/dev/null || die "skopeo non trovato nel PATH"
-        command -v jq >/dev/null || die "jq non trovato nel PATH"
-        up=$(skopeo inspect --no-tags "docker://$ref" | jq -r .Digest)
-        echo "pinnata:  $digest"
-        echo "upstream: $up  ($ref)"
-        [ "$digest" = "$up" ] || die "la base pinnata NON è aggiornata (bump-base la allinea ogni giorno)"
+        case "$ref" in
+            */fedora-silverblue:[0-9]*) echo "$version" ;;
+            *) die "Containerfile: versione Fedora non ricavabile dalla riga FROM" ;;
+        esac
         ;;
     *)
-        die "uso: $0 {ref|version|digest|full|upstream|check}"
+        die "uso: $0 {ref|version}"
         ;;
 esac
