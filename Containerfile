@@ -11,7 +11,7 @@
 #
 # Base: official GNOME atomic bootc image (dnf5 + bootc included).
 
-FROM quay.io/fedora/fedora-silverblue:45@sha256:d3a500ddea500f58d6b604ae42c570b04d7ab2e6bab207dff38dac7b5ef0189d
+FROM quay.io/fedora/fedora-silverblue:45@sha256:dc1f19d81219cca21a5e16ff461bbe16523ced7a45e3fbf3737101fe12bd2455
 
 # Build metadata (VERSION/SOURCE_COMMIT are passed by CI or the Makefile).
 ARG VERSION=dev
