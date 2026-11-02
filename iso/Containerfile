@@ -20,6 +20,10 @@
 ARG BOOTC_IMAGE=localhost/bootc-fedora:latest
 FROM ${BOOTC_IMAGE}
 
+# The rechunked OS image has a minimal OCI config (no Env): declare PATH so
+# the RUN instructions below (dnf5, realpath, dracut, ...) resolve.
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Anaconda (installer) + the executables required by bootc-generic-iso:
 # podman, mksquashfs, xorriso, implantisomd5, grub2-mkimage, python.
 RUN dnf5 install -y \

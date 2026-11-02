@@ -7,23 +7,28 @@ aggiornamenti sulla target avvengono via `bootc upgrade`.
 ## Flusso di lavoro
 
 1. **Build locale** — `make build` (immagine `localhost/bootc-fedora:latest`).
-2. **Test in VM** — `bcvk ephemeral run-ssh localhost/bootc-fedora`.
-3. **Pubblica su ghcr** — push su GitHub (CI) o `make push ORG=laruota`. Il package
+2. **Rechunk** — `make rechunk`: riscrive i layer in base ai pacchetti RPM, così
+   gli aggiornamenti sulla target scaricano solo il delta. È automatico in CI e
+   in `make push`; serve esplicitamente solo per testare in VM ciò che verrà
+   pubblicato.
+3. **Test in VM** — `bcvk ephemeral run-ssh localhost/bootc-fedora`.
+4. **Pubblica su ghcr** — push su GitHub (CI) o `make push ORG=laruota`. Il package
    va reso **pubblico** per il pull anonimo usato dal deploy.
-4. **Prima installazione sulla target** — la via più corta è installare
+5. **Prima installazione sulla target** — la via più corta è installare
    Silverblue ufficiale e fare il rebase su questa immagine; in alternativa
    genera un'ISO con `image-builder` (`bootc-generic-iso`) o un qcow2 per VM.
-5. **Aggiornamenti** — sulla target: `bootc switch` al tag desiderato, poi
+6. **Aggiornamenti** — sulla target: `bootc switch` al tag desiderato, poi
    `bootc upgrade`.
-6. **Ripiego** — se qualcosa non va, la target si riporta a Silverblue stock con
+7. **Ripiego** — se qualcosa non va, la target si riporta a Silverblue stock con
    `bootc switch`, senza reinstallare: vedi "Tornare a Silverblue".
 
 ## Contenuto
 
 - `Containerfile` — definizione dell'immagine (base Fedora `45` nella riga `FROM`)
-- `Makefile` — scorciatoie `make build` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso` / `make verify`
+- `Makefile` — scorciatoie `make build` / `make rechunk` / `make lint` / `make shellcheck` / `make smoke` / `make push` / `make installer` / `make iso` / `make verify`
 - `scripts/setup.sh` — pacchetti da installare/rimuovere (aggiungi qui le tue utility)
 - `scripts/base-ref.sh` — legge la base dal `Containerfile` (`ref`, `version`); usato da Makefile e workflow
+- `scripts/rechunk.sh` — riscrive l'immagine a layer content-based con `rpm-ostree compose build-chunked-oci` (usato da CI e `make push`)
 - `scripts/vscode.sh` — installa Visual Studio Code dal repo RPM ufficiale
 - `scripts/fonts.sh` — pulizia font internazionali (da validare in VM)
 - `scripts/bootstrap-flatpaks.sh` — bootstrap flatpak di sistema sulla macchina target (copiato in `/usr/libexec/bootc-fedora` nell'immagine)
@@ -91,8 +96,8 @@ target). Per usare `run-ssh` devi abilitarlo dentro la VM, es.:
 L'immagine contenitore NON contiene chiavi LUKS (la crittografia è creata in locale
 sulla target all'installazione).
 
-La GitHub Action `.github/workflows/build.yml` builda e pubblica su
-`ghcr.io/laruota/bootc-fedora` a ogni push su `main`, con un **rebuild
+La GitHub Action `.github/workflows/build.yml` builda, **rechunka** e pubblica
+su `ghcr.io/laruota/bootc-fedora` a ogni push su `main`, con un **rebuild
 giornaliero** (`schedule`, 03:17 UTC) e su `workflow_dispatch`. Il rebuild
 periodico è necessario perché gli RPM arrivano dai repository *al momento della
 build*: senza ricostruzioni, `bootc upgrade` sulla target sarebbe un no-op e gli
@@ -138,6 +143,40 @@ sostituisce il tag con `quay.io/fedora/fedora-silverblue:45@sha256:…` nella ri
 `FROM`, sapendo che quel pin vale solo fino alla compose successiva: per questo
 non è il funzionamento normale.
 
+### Rechunk e aggiornamenti incrementali
+
+Prima della pubblicazione, CI e `make push` eseguono `scripts/rechunk.sh`
+(`make rechunk` per farlo a mano). Il rechunk riscrive l'immagine a **layer
+content-based** con `rpm-ostree compose build-chunked-oci --bootc`: i file dello
+stesso pacchetto RPM finiscono nello stesso layer, indipendentemente da come è
+stata costruita l'immagine. In questo modo `bootc upgrade` confronta i digest dei
+layer e scarica solo i pacchetti cambiati.
+
+Parametri usati: `--format-version=2` (layer riproducibili) e `--max-layers=127`.
+L'immagine resta **ostree-based**: cambia solo il trasporto OCI, non il backend
+di deployment, quindi `bootc switch`/rollback continuano a funzionare.
+
+Da sapere:
+
+- **Il primo upgrade** dopo il passaggio al layout chunked scarica quasi tutta
+  l'immagine (~3 GB): i digest dei layer cambiano tutti una volta. Dal build
+  successivo in poi scarica solo il delta (tipicamente poche centinaia di MB).
+- Il rechunk crea una config OCI nuova: **Cmd/Env non vengono ereditati**. bootc
+  non li usa (il boot passa da systemd/kargs), quindi l'immagine OS non cambia;
+  `make smoke`/`make lint` dichiarano il `PATH` esplicitamente.
+- Le label della build (incluse `org.opencontainers.image.base.digest` e le
+  `ostree.*`) vengono preservate/rigenerate.
+- `PREVIOUS_BUILD=docker://ghcr.io/laruota/bootc-fedora:45` (o l'equivalente
+  `--previous-build`) ancora il piano dei layer alla build precedente: utile se
+  in futuro si cambia spesso il set di pacchetti. Deve puntare a una build già
+  chunked (label `org.bootc-fedora.rechunked=1`); il controllo usa `skopeo` e,
+  se non è disponibile o la build non è chunked, l'opzione viene ignorata. In CI
+  è impostato automaticamente: sulla prima build viene ignorato perché
+  l'immagine precedente non è ancora chunked.
+- Passare a un'**altra** immagine (es. Silverblue stock) può scaricare più del
+  solo delta: il layout dei layer è diverso anche a parità di contenuti. Il
+  delta piccolo vale tra build consecutive di questa immagine.
+
 ### Firma
 
 Ogni build pubblicata è firmata con **cosign keyless**: la firma è legata a
@@ -180,8 +219,9 @@ solo il workflow):
 ### Da Silverblue ufficiale, senza ISO
 
 Se la macchina ha rete, l'ISO non serve: si installa Silverblue 45 ufficiale e
-poi si passa a questa immagine con un rebase (la base è la stessa, quindi si
-scarica solo il delta e `/home`/`/var` non si toccano).
+poi si passa a questa immagine con un rebase (la base è la stessa, quindi non si
+riscarica tutto il contenuto anche se il layout dei layer chunked può richiedere
+più di un semplice delta; `/home`/`/var` non si toccano).
 
 ```bash
 # che cosa gestisce il sistema appena installato?
@@ -289,9 +329,10 @@ viene sostituito in blocco; `/etc` viene rifuso in merge a 3 vie.
     sudo bootc switch ghcr.io/laruota/bootc-fedora:45
     sudo reboot
 
-Il download è solo il delta (la base è la stessa), quindi pochi minuti e qualche
-centinaio di MB. Se invece il problema è il deployment *nuovo* (non la rete),
-basta il rollback, che non scarica nulla:
+Il contenuto della base è lo stesso, ma dopo il rechunk il layout dei layer è
+diverso da quello di Silverblue stock: il download può quindi essere più grande
+del solo delta (una tantum, non a ogni aggiornamento). Se invece il problema è
+il deployment *nuovo* (non la rete), basta il rollback, che non scarica nulla:
 
     sudo bootc rollback --apply    # oppure la voce di rollback nel menu GRUB
 

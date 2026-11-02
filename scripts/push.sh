@@ -3,6 +3,12 @@
 # Prerequisito: podman login ghcr.io (una volta).
 # Uso: ./scripts/push.sh <org> [tag] [source-image] [source-tag]
 #
+# Prima del push esegue scripts/rechunk.sh: l'immagine pubblicata usa layer
+# content-based, così `bootc upgrade` scarica solo i layer cambiati.
+# SKIP_RECHUNK=1 per pubblicare l'immagine così com'è.
+# PREVIOUS_BUILD=docker://... (opzionale) ancora il piano dei layer alla build
+# precedente; utile dopo la prima pubblicazione chunked.
+#
 # Il tag di default (versione Fedora) è letto dal Containerfile via base-ref.sh,
 # così non può divergere dalla base buildata.
 # Pubblica gli stessi tag della CI:
@@ -24,6 +30,12 @@ SOURCE="${SOURCE_IMAGE}:${SOURCE_TAG}"
 DATE="${DATE:-$(date -u +%Y%m%d)}"
 SHA="${SHA:-$(git -C "$here/.." rev-parse --short=7 HEAD 2>/dev/null || echo local)}"
 REPO="ghcr.io/${ORG}/bootc-fedora"
+
+# Rechunk in place (source and target tag are the same). PREVIOUS_BUILD is
+# passed through to rechunk.sh when set by the caller.
+if [ "${SKIP_RECHUNK:-0}" != "1" ]; then
+    "$here/rechunk.sh" "$SOURCE_IMAGE" "$SOURCE_TAG"
+fi
 
 podman tag "$SOURCE" "$REPO:${TAG}"
 podman tag "$SOURCE" "$REPO:latest"

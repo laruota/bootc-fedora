@@ -1,8 +1,9 @@
 name: build
 
+# L'immagine viene rechunkata prima del push (scripts/rechunk.sh): layer
+# content-based per pacchetto RPM, così `bootc upgrade` scarica solo il delta.
+#
 # TODO (migliorie future — riferimento: ublue-os/image-template):
-# - Rechunk (`rpm-ostree experimental compose build-chunked-oci` / chunkah) per
-#   update più piccoli e riprendibili sulla target.
 # - Enforcement lato target (`policy.json` sigstoreSigned + `bootc switch
 #   --enforce-container-sigpolicy`): richiede una firma con chiave, che qui non
 #   è configurata. La firma keyless c'è già.
@@ -56,6 +57,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # Il rechunk usa spazio in più (immagine intermedia + chunked): libera
+      # i toolchain preinstallati che questa build non usa.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+
+      # Serve a verificare (senza pull) se la build precedente è già chunked
+      # prima di usarla come --previous-build. Se l'installazione fallisce il
+      # build prosegue: rechunk.sh ignora semplicemente l'opzione.
+      - name: Install skopeo
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq skopeo \
+            || echo "::warning::skopeo non installato: --previous-build verrà ignorato"
 
       - name: ShellCheck scripts
         run: make shellcheck
@@ -132,10 +150,34 @@ jobs:
             --label "org.opencontainers.image.base.digest=$BASE_DIGEST" \
             --build-arg "VERSION=$VERSION" \
             --build-arg "SOURCE_COMMIT=${{ github.sha }}" \
-            -t "$IMAGE:$VERSION" \
-            -t "$IMAGE:latest" \
-            -t "$IMAGE:$VERSION-$DATE" \
-            -t "$IMAGE:$VERSION-$SHA" .
+            -t "$IMAGE:$VERSION-build" .
+
+      # Rechunk: legge l'immagine montata come rootfs e riscrive i layer in
+      # base ai pacchetti RPM. Da qui in poi `$VERSION` è l'immagine da
+      # pubblicare; `$VERSION-build` è solo l'intermedia non chunked.
+      #
+      # PREVIOUS_BUILD ancora il piano dei layer alla build precedente. Sulla
+      # prima build l'immagine precedente non è ancora chunked (manca la label
+      # org.bootc-fedora.rechunked): scripts/rechunk.sh la ignora.
+      - name: Rechunk image
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_BUILD="docker://$IMAGE:$VERSION" \
+            scripts/rechunk.sh "$IMAGE" "$VERSION-build" "$VERSION"
+
+      # Il digest è lo stesso per tutti i tag: si firma e si pubblica quello.
+      - name: Tag rechunked image
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          DATE: ${{ steps.ver.outputs.date }}
+          SHA: ${{ steps.ver.outputs.sha }}
+        run: |
+          set -euo pipefail
+          podman tag "$IMAGE:$VERSION" "$IMAGE:latest"
+          podman tag "$IMAGE:$VERSION" "$IMAGE:$VERSION-$DATE"
+          podman tag "$IMAGE:$VERSION" "$IMAGE:$VERSION-$SHA"
 
       - name: Smoke test image
         run: make smoke IMAGE="$IMAGE" TAG="${{ steps.ver.outputs.version }}"
@@ -147,9 +189,8 @@ jobs:
       # identificatore stabile è il digest.
       # Il digest è lo stesso per tutti i tag: si firma e si pubblica quello.
       # Ordine dei push: prima i riferimenti per data/sha, poi i canali. Se un
-      # push fallisce
-      # a metà, `45`/`latest` restano sulla build precedente (che è quella buona)
-      # invece di puntare a un'immagine pubblicata solo in parte.
+      # push fallisce a metà, `45`/`latest` restano sulla build precedente (che è
+      # quella buona) invece di puntare a un'immagine pubblicata solo in parte.
       - name: Push image
         id: push
         if: github.event_name != 'pull_request'
@@ -210,6 +251,7 @@ jobs:
           BASE_DIGEST: ${{ steps.base.outputs.digest }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
+          layers=$(podman image inspect --format '{{len .RootFS.Layers}}' "$IMAGE:$VERSION")
           {
             echo "### bootc-fedora $VERSION"
             echo
@@ -218,6 +260,7 @@ jobs:
             echo "| immagine | \`$IMAGE@$DIGEST\` |"
             echo "| tag | \`$VERSION\`, \`latest\`, \`$VERSION-$DATE\`, \`$VERSION-$SHA\` |"
             echo "| base | \`$BASE@$BASE_DIGEST\` |"
+            echo "| layer (rechunked) | \`$layers\` |"
             echo
             echo "Pin sulla target: \`sudo bootc switch $IMAGE@$DIGEST\`"
           } >> "$GITHUB_STEP_SUMMARY"

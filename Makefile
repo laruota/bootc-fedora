@@ -19,8 +19,11 @@ IMAGE_REPO     ?= ghcr.io/$(if $(ORG),$(ORG),laruota)/bootc-fedora
 # Branch da cui parte la build firmata: serve all'identità del certificato
 # keyless verificata da `make verify`.
 MAIN_REF       ?= refs/heads/main
+# Il rechunk resetta Cmd/Env dell'immagine: i comandi eseguiti con podman run
+# devono dichiarare PATH esplicitamente.
+RUN_ENV        := --env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-.PHONY: build lint shellcheck smoke push installer iso clean verify check-iso-ref require-version
+.PHONY: build rechunk lint shellcheck smoke push installer iso clean verify check-iso-ref require-version
 
 # Se la versione non si riesce a leggere dalla riga FROM, i target che la usano
 # si fermano: meglio di un'immagine con VERSION vuota.
@@ -40,9 +43,15 @@ build: require-version
 	    --build-arg "SOURCE_COMMIT=$$(git rev-parse HEAD 2>/dev/null)" \
 	    -t $(IMAGE):$(TAG) .
 
+# Rechunk in place for content-based layers (smaller `bootc upgrade` deltas).
+# CI and `make push` do this automatically; run it explicitly before a VM test
+# if you want to test exactly what gets published.
+rechunk: require-version
+	./scripts/rechunk.sh $(IMAGE) $(TAG)
+
 # Re-run the image linter on an already-built image (same check the build runs).
 lint:
-	podman run --rm $(IMAGE):$(TAG) bootc container lint --fatal-warnings
+	podman run --rm $(RUN_ENV) $(IMAGE):$(TAG) bootc container lint --fatal-warnings
 
 # Lint scripts without adding ShellCheck to the deployed operating system.
 shellcheck:
@@ -50,7 +59,7 @@ shellcheck:
 
 # Check the custom operating-system content without requiring a VM boot.
 smoke:
-	podman run --rm $(IMAGE):$(TAG) bash -ceu \
+	podman run --rm $(RUN_ENV) $(IMAGE):$(TAG) bash -ceu \
 	    'bootc container lint; \
 	    test -x /usr/libexec/bootc-fedora/bootstrap-flatpaks.sh; \
 	    test -x /usr/libexec/bootc-fedora/bootstrap-python.sh; \
@@ -64,7 +73,8 @@ smoke:
 	    rpm -q google-noto-sans-vf-fonts google-noto-serif-vf-fonts google-noto-sans-mono-vf-fonts google-noto-color-emoji-fonts; \
 	    if systemctl is-enabled sshd >/dev/null 2>&1; then exit 1; fi'
 
-# Tag and push to ghcr.io via scripts/push.sh. Requires `podman login ghcr.io` once.
+# Tag, rechunk and push to ghcr.io via scripts/push.sh. Requires
+# `podman login ghcr.io` once.
 push: require-version
 	@test -n "$(ORG)" || { echo "usage: make push ORG=<your-org>"; exit 1; }
 	./scripts/push.sh $(ORG) $(FEDORA_VERSION) $(IMAGE) $(TAG)
