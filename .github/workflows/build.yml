@@ -3,11 +3,13 @@ name: build
 # L'immagine viene rechunkata prima del push (scripts/rechunk.sh): layer
 # content-based per pacchetto RPM, così `bootc upgrade` scarica solo il delta.
 #
-# Il push DEVE usare `--format oci`: il formato predefinito di podman perde le
-# annotazioni `ostree.components`. Senza quelle annotazioni
-# `build-chunked-oci --previous-build` considera l'immagine precedente "non
-# chunked", ricalcola il piano dei layer da zero a ogni build e gli
-# aggiornamenti tornano enormi (~1 GB/giorno invece di poche centinaia di MB).
+# Il rechunk scrive un layout OCI e il push usa `skopeo copy`: le annotazioni
+# `ostree.components` sui layer devono arrivare intatte al registry. Senza
+# quelle annotazioni `build-chunked-oci --previous-build` considera l'immagine
+# precedente "non chunked", ricalcola il piano dei layer da zero a ogni build e
+# gli aggiornamenti tornano enormi (~1 GB/giorno invece di poche centinaia di
+# MB). Il transport containers-storage di containers/image (versione del runner)
+# perde le annotazioni quando copia, quindi il rechunk non passa da lì.
 #
 # TODO (migliorie future — riferimento: ublue-os/image-template):
 # - Enforcement lato target (`policy.json` sigstoreSigned + `bootc switch
@@ -73,8 +75,10 @@ jobs:
           sudo docker image prune -af || true
 
       # Serve a verificare (senza pull) se la build precedente è già chunked
-      # prima di usarla come --previous-build. Se l'installazione fallisce il
-      # build prosegue: rechunk.sh ignora semplicemente l'opzione.
+      # prima di usarla come --previous-build, e a importare/pubblicare il
+      # layout OCI del rechunk. Se l'installazione fallisce il build prosegue:
+      # rechunk.sh ignora --previous-build e gli step successivi falliscono in
+      # modo esplicito se skopeo manca davvero.
       - name: Install skopeo
         run: |
           sudo apt-get update -qq || true
@@ -162,6 +166,10 @@ jobs:
       # base ai pacchetti RPM. Da qui in poi `$VERSION` è l'immagine da
       # pubblicare; `$VERSION-build` è solo l'intermedia non chunked.
       #
+      # L'output è un layout OCI, non containers-storage: il transport storage
+      # di containers/image (versione del runner) perde le annotazioni
+      # `ostree.components` quando copia, mentre un layout OCI le conserva.
+      #
       # PREVIOUS_BUILD ancora il piano dei layer alla build precedente. Sulla
       # prima build l'immagine precedente non è ancora chunked (manca la label
       # org.bootc-fedora.rechunked e/o le annotazioni ostree.components):
@@ -169,22 +177,21 @@ jobs:
       - name: Rechunk image
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          RECHUNK_OCI_DIR: ${{ runner.temp }}/rechunked
         run: |
           set -euo pipefail
           PREVIOUS_BUILD="docker://$IMAGE:$VERSION" \
             scripts/rechunk.sh "$IMAGE" "$VERSION-build" "$VERSION"
 
-      # Il digest è lo stesso per tutti i tag: si firma e si pubblica quello.
-      - name: Tag rechunked image
+      # Il layout OCI è la sorgente del push; l'import in containers-storage
+      # serve solo a `make smoke` e al conteggio dei layer nel summary.
+      - name: Import rechunked image
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-          DATE: ${{ steps.ver.outputs.date }}
-          SHA: ${{ steps.ver.outputs.sha }}
+          RECHUNK_OCI_DIR: ${{ runner.temp }}/rechunked
         run: |
           set -euo pipefail
-          podman tag "$IMAGE:$VERSION" "$IMAGE:latest"
-          podman tag "$IMAGE:$VERSION" "$IMAGE:$VERSION-$DATE"
-          podman tag "$IMAGE:$VERSION" "$IMAGE:$VERSION-$SHA"
+          skopeo copy "oci:$RECHUNK_OCI_DIR:$VERSION" "containers-storage:$IMAGE:$VERSION"
 
       - name: Smoke test image
         run: make smoke IMAGE="$IMAGE" TAG="${{ steps.ver.outputs.version }}"
@@ -195,9 +202,9 @@ jobs:
       # secondo a ogni rebuild dello stesso commit (il cron giornaliero). L'unico
       # identificatore stabile è il digest.
       # Il digest è lo stesso per tutti i tag: si firma e si pubblica quello.
-      # `--format oci` è obbligatorio: preserva le annotazioni
-      # `ostree.components` sui layer, che il push predefinito (v2s2) perde.
-      # Senza, la build successiva non può riusare il piano dei layer.
+      # Il push parte dal layout OCI con skopeo: copia il manifest così com'è e
+      # conserva le annotazioni `ostree.components` (podman 4.9, quello del
+      # runner, le perde anche con `--format oci`).
       # Ordine dei push: prima i riferimenti per data/sha, poi i canali. Se un
       # push fallisce a metà, `45`/`latest` restano sulla build precedente (che è
       # quella buona) invece di puntare a un'immagine pubblicata solo in parte.
@@ -208,19 +215,22 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           DATE: ${{ steps.ver.outputs.date }}
           SHA: ${{ steps.ver.outputs.sha }}
+          RECHUNK_OCI_DIR: ${{ runner.temp }}/rechunked
         run: |
           set -euo pipefail
-          podman push --format oci --digestfile "$RUNNER_TEMP/digest" "$IMAGE:$VERSION-$DATE"
-          podman push --format oci "$IMAGE:$VERSION-$SHA"
-          podman push --format oci "$IMAGE:$VERSION"
-          podman push --format oci "$IMAGE:latest"
+          src="oci:$RECHUNK_OCI_DIR:$VERSION"
+          skopeo copy --digestfile "$RUNNER_TEMP/digest" "$src" "docker://$IMAGE:$VERSION-$DATE"
+          skopeo copy "$src" "docker://$IMAGE:$VERSION-$SHA"
+          skopeo copy "$src" "docker://$IMAGE:$VERSION"
+          skopeo copy "$src" "docker://$IMAGE:latest"
           digest=$(cat "$RUNNER_TEMP/digest")
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "digest inatteso: $digest" >&2; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      # Rete di sicurezza: se un giorno il push tornasse al formato predefinito
-      # le annotazioni sparirebbero di nuovo e il piano dei layer ripartirebbe
-      # da zero. Meglio fallire qui che scoprirlo da un upgrade da 1,8 GB.
+      # Rete di sicurezza: se un giorno il push perdesse di nuovo le annotazioni
+      # (formato sbagliato, transport che le scarta) il piano dei layer
+      # ripartirebbe da zero. Meglio fallire qui che scoprirlo da un upgrade da
+      # 1,8 GB.
       - name: Verify chunked layer annotations
         if: github.event_name != 'pull_request'
         env:

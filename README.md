@@ -156,14 +156,15 @@ Parametri usati: `--format-version=2` (layer riproducibili) e `--max-layers=127`
 L'immagine resta **ostree-based**: cambia solo il trasporto OCI, non il backend
 di deployment, quindi `bootc switch`/rollback continuano a funzionare.
 
-Il push **deve** usare il formato OCI (`podman push --format oci`, come fanno CI
-e `scripts/push.sh`): il formato predefinito di podman perde le annotazioni
-`ostree.components` sui layer. Senza quelle annotazioni
+Il push **deve** conservare le annotazioni `ostree.components` sui layer: senza,
 `build-chunked-oci --previous-build` considera l'immagine precedente "non
 chunked", ricalcola il piano dei layer da zero a ogni build e gli aggiornamenti
-tornano grandi (~1 GB al giorno invece di poche centinaia di MB). CI e
-`scripts/push.sh` verificano la presenza delle annotazioni e falliscono se
-mancano.
+tornano grandi (~1 GB al giorno invece di poche centinaia di MB). Il transport
+`containers-storage` di containers/image (la versione del runner CI) le perde
+quando copia, quindi la CI scrive un **layout OCI** (`RECHUNK_OCI_DIR`) e
+pubblica con `skopeo copy`; in locale `scripts/push.sh` usa
+`podman push --format oci`. CI e `scripts/push.sh` verificano la presenza delle
+annotazioni e falliscono se mancano.
 
 Da sapere:
 

@@ -24,8 +24,13 @@
 #                            build: here the label org.bootc-fedora.rechunked=1
 #                            is the quick check, while build-chunked-oci also
 #                            requires the ostree.components annotation on every
-#                            layer (the push must use --format oci to keep it).
+#                            layer (the push must preserve it).
 #                            Skipped otherwise or when skopeo is unavailable.
+#   RECHUNK_OCI_DIR          optional directory: write an OCI layout there
+#                            instead of importing into containers-storage. CI
+#                            uses it because the containers-storage transport of
+#                            older containers/image drops layer annotations when
+#                            copying, while an OCI layout keeps them.
 #   RECHUNK_MAX_LAYERS       default 127
 #   RECHUNK_FORMAT_VERSION   default 2
 set -euo pipefail
@@ -36,6 +41,7 @@ TARGET_TAG="${3:-$SOURCE_TAG}"
 
 MAX_LAYERS="${RECHUNK_MAX_LAYERS:-127}"
 FORMAT_VERSION="${RECHUNK_FORMAT_VERSION:-2}"
+OUTPUT_OCI_DIR="${RECHUNK_OCI_DIR:-}"
 
 die() {
     echo "errore: $*" >&2
@@ -123,12 +129,26 @@ fi
 
 echo "rechunk: $IMAGE:$SOURCE_TAG -> $IMAGE:$TARGET_TAG (format v$FORMAT_VERSION, max $MAX_LAYERS layers)"
 
-# GraphRoot is bind-mounted so the output image lands in the host podman
-# storage. /run/rpm-ostree-storage is only the transient runroot.
+output_mount=()
+if [ -n "$OUTPUT_OCI_DIR" ]; then
+    # OCI layout: keeps the `ostree.components` annotations, which the
+    # containers-storage transport of older containers/image drops on copy.
+    mkdir -p "$OUTPUT_OCI_DIR"
+    output_mount=(--mount "type=bind,src=$OUTPUT_OCI_DIR,target=/run/rechunk-output,rw")
+    output_args=(--output "oci:/run/rechunk-output:$TARGET_TAG")
+    output_ref="oci:$OUTPUT_OCI_DIR:$TARGET_TAG"
+else
+    # GraphRoot is bind-mounted so the output image lands in the host podman
+    # storage. /run/rpm-ostree-storage is only the transient runroot.
+    output_args=(--output "containers-storage:[overlay@/run/host-container-storage+/run/rpm-ostree-storage]${IMAGE}:${TARGET_TAG}")
+    output_ref="containers-storage:$IMAGE:$TARGET_TAG"
+fi
+
 podman run --rm --pull=never --privileged --security-opt label=disable \
     --mount=type=image,src="$IMAGE:$SOURCE_TAG",target=/rpm-ostree \
     --mount=type=bind,src="$GRAPHROOT",target=/run/host-container-storage,rw \
     --mount=type=tmpfs,target=/run/rpm-ostree-storage \
+    "${output_mount[@]}" \
     "${auth_args[@]}" \
     --entrypoint /usr/bin/rpm-ostree \
     "$IMAGE:$SOURCE_TAG" \
@@ -139,7 +159,7 @@ podman run --rm --pull=never --privileged --security-opt label=disable \
     --rootfs /rpm-ostree \
     "${previous[@]}" \
     "${labels[@]}" \
-    --output "containers-storage:[overlay@/run/host-container-storage+/run/rpm-ostree-storage]${IMAGE}:${TARGET_TAG}"
+    "${output_args[@]}"
 
 # Sanity checks: bootc refuses images without containers.bootc=1, and the
 # README promises the base digest label for published images.
@@ -147,38 +167,39 @@ required_labels=(containers.bootc ostree.commit)
 if [ "$source_has_base_digest" = 1 ]; then
     required_labels+=(org.opencontainers.image.base.digest)
 fi
-for label in "${required_labels[@]}"; do
-    value="$(podman image inspect --format \
-        "{{with .Config.Labels}}{{index . \"$label\"}}{{end}}" \
-        "$IMAGE:$TARGET_TAG" 2>/dev/null || true)"
-    [ -n "$value" ] || die "label mancante nell'immagine rechunkata: $label"
-done
+
+# Read labels and the manifest from whichever transport holds the output. For
+# the OCI layout skopeo is mandatory (the annotations are the point of that
+# mode); for containers-storage it is optional and only used for annotations.
+manifest_json=""
+if [ -n "$OUTPUT_OCI_DIR" ]; then
+    command -v skopeo >/dev/null 2>&1 || die "skopeo è richiesto con RECHUNK_OCI_DIR"
+    labels_json="$(skopeo inspect --config "$output_ref" \
+        | python3 -c 'import json,sys; print(json.dumps((json.load(sys.stdin).get("config") or {}).get("Labels") or {}))')"
+    manifest_json="$(skopeo inspect --raw "$output_ref")"
+else
+    labels_json="$(podman image inspect --format '{{json .Config.Labels}}' "$IMAGE:$TARGET_TAG")"
+    if command -v skopeo >/dev/null 2>&1; then
+        manifest_json="$(skopeo inspect --raw "containers-storage:$IMAGE:$TARGET_TAG")"
+    fi
+fi
+
+missing_labels="$(printf '%s' "$labels_json" | python3 -c 'import json,sys; labels=json.load(sys.stdin) or {}; print(" ".join(label for label in sys.argv[1:] if not labels.get(label)))' "${required_labels[@]}")"
+[ -z "$missing_labels" ] || die "label mancanti nell'immagine rechunkata: $missing_labels"
 
 # `build-chunked-oci --previous-build` riusa il piano dei layer solo se ogni
 # layer (tranne il primo, quello dei metadati ostree) porta l'annotazione
-# `ostree.components`. Il push deve conservarla (`podman push --format oci`):
-# senza, la build successiva ricalcola il piano da zero e gli upgrade tornano
-# da ~1 GB. Verifichiamola qui, prima del push.
-if command -v skopeo >/dev/null 2>&1; then
-    missing_annotations="$(
-        skopeo inspect --raw "containers-storage:$IMAGE:$TARGET_TAG" 2>/dev/null \
-            | python3 -c 'import json,sys; layers=json.load(sys.stdin).get("layers",[]); print(sum(1 for layer in layers[1:] if "ostree.components" not in (layer.get("annotations") or {})))' 2>/dev/null \
-            || echo unknown
-    )"
-    case "$missing_annotations" in
-        0) ;;
-        unknown)
-            echo "rechunk: impossibile verificare le annotazioni ostree.components" >&2
-            ;;
-        *)
-            die "$missing_annotations layer senza annotazione ostree.components: il piano dei layer non sarebbe riutilizzabile"
-            ;;
-    esac
+# `ostree.components`. Il push deve conservarla: senza, la build successiva
+# ricalcola il piano da zero e gli upgrade tornano da ~1 GB.
+if [ -n "$manifest_json" ]; then
+    missing_annotations="$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; layers=json.load(sys.stdin).get("layers",[]); print(sum(1 for layer in layers[1:] if "ostree.components" not in (layer.get("annotations") or {})))')"
+    [ "$missing_annotations" = 0 ] || die "$missing_annotations layer senza annotazione ostree.components: il piano dei layer non sarebbe riutilizzabile"
+    layers="$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("layers",[])))')"
 else
     echo "rechunk: skopeo assente, salto il controllo delle annotazioni ostree.components" >&2
+    layers="$(podman image inspect --format '{{len .RootFS.Layers}}' "$IMAGE:$TARGET_TAG")"
 fi
 
-layers="$(podman image inspect --format '{{len .RootFS.Layers}}' "$IMAGE:$TARGET_TAG")"
 echo "rechunk: immagine pronta ($layers layer)"
 
 # The source is the intermediate (non-chunked) build: it is no longer needed
