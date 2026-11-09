@@ -156,11 +156,23 @@ Parametri usati: `--format-version=2` (layer riproducibili) e `--max-layers=127`
 L'immagine resta **ostree-based**: cambia solo il trasporto OCI, non il backend
 di deployment, quindi `bootc switch`/rollback continuano a funzionare.
 
+Il push **deve** usare il formato OCI (`podman push --format oci`, come fanno CI
+e `scripts/push.sh`): il formato predefinito di podman perde le annotazioni
+`ostree.components` sui layer. Senza quelle annotazioni
+`build-chunked-oci --previous-build` considera l'immagine precedente "non
+chunked", ricalcola il piano dei layer da zero a ogni build e gli aggiornamenti
+tornano grandi (~1 GB al giorno invece di poche centinaia di MB). CI e
+`scripts/push.sh` verificano la presenza delle annotazioni e falliscono se
+mancano.
+
 Da sapere:
 
 - **Il primo upgrade** dopo il passaggio al layout chunked scarica quasi tutta
   l'immagine (~3 GB): i digest dei layer cambiano tutti una volta. Dal build
   successivo in poi scarica solo il delta (tipicamente poche centinaia di MB).
+  Lo stesso vale dopo un cambio del piano dei layer (es. la correzione del
+  formato di push): serve una build "di transizione", poi i delta tornano
+  piccoli.
 - Il rechunk crea una config OCI nuova: **Cmd/Env non vengono ereditati**. bootc
   non li usa (il boot passa da systemd/kargs), quindi l'immagine OS non cambia;
   `make smoke`/`make lint` dichiarano il `PATH` esplicitamente.
@@ -168,11 +180,14 @@ Da sapere:
   `ostree.*`) vengono preservate/rigenerate.
 - `PREVIOUS_BUILD=docker://ghcr.io/laruota/bootc-fedora:45` (o l'equivalente
   `--previous-build`) ancora il piano dei layer alla build precedente: utile se
-  in futuro si cambia spesso il set di pacchetti. Deve puntare a una build già
-  chunked (label `org.bootc-fedora.rechunked=1`); il controllo usa `skopeo` e,
-  se non è disponibile o la build non è chunked, l'opzione viene ignorata. In CI
-  è impostato automaticamente: sulla prima build viene ignorato perché
-  l'immagine precedente non è ancora chunked.
+  in futuro si cambia spesso il set di pacchetti. Perché funzioni, l'immagine
+  precedente deve avere l'annotazione `ostree.components` su ogni layer (tranne
+  il primo): è il controllo che fa `build-chunked-oci`. `scripts/rechunk.sh`
+  passa l'opzione solo se la build precedente ha la label
+  `org.bootc-fedora.rechunked=1` (verifica con `skopeo`); se la label manca o
+  `skopeo` non è disponibile, l'opzione viene ignorata. In CI è impostato
+  automaticamente: la prima build dopo un cambio di piano non ha un'immagine
+  precedente utilizzabile, la successiva si ancora.
 - Passare a un'**altra** immagine (es. Silverblue stock) può scaricare più del
   solo delta: il layout dei layer è diverso anche a parità di contenuti. Il
   delta piccolo vale tra build consecutive di questa immagine.

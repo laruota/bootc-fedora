@@ -5,6 +5,9 @@
 #
 # Prima del push esegue scripts/rechunk.sh: l'immagine pubblicata usa layer
 # content-based, così `bootc upgrade` scarica solo i layer cambiati.
+# Il push usa `--format oci`: il formato predefinito di podman perde le
+# annotazioni `ostree.components`, senza le quali il rechunk non riusa il piano
+# dei layer e gli aggiornamenti tornano grandi.
 # SKIP_RECHUNK=1 per pubblicare l'immagine così com'è.
 # PREVIOUS_BUILD=docker://... (opzionale) ancora il piano dei layer alla build
 # precedente; utile dopo la prima pubblicazione chunked.
@@ -47,11 +50,27 @@ trap 'rm -f "$digestfile"' EXIT
 
 # Prima i riferimenti per data/sha, poi i canali: se un push fallisce a metà,
 # `:tag` e `:latest` restano sulla build precedente (quella buona).
-podman push --digestfile "$digestfile" "$REPO:${TAG}-${DATE}"
+# `--format oci` preserva le annotazioni `ostree.components` sui layer.
+podman push --format oci --digestfile "$digestfile" "$REPO:${TAG}-${DATE}"
 digest=$(cat "$digestfile")
-podman push "$REPO:${TAG}-${SHA}"
-podman push "$REPO:${TAG}"
-podman push "$REPO:latest"
+podman push --format oci "$REPO:${TAG}-${SHA}"
+podman push --format oci "$REPO:${TAG}"
+podman push --format oci "$REPO:latest"
+
+# Il push predefinito (v2s2) perderebbe le annotazioni: verifichiamole subito.
+if command -v skopeo >/dev/null 2>&1; then
+    missing_annotations="$(
+        skopeo inspect --raw "docker://$REPO@$digest" 2>/dev/null \
+            | python3 -c 'import json,sys; layers=json.load(sys.stdin).get("layers",[]); print(sum(1 for layer in layers[1:] if "ostree.components" not in (layer.get("annotations") or {})))' 2>/dev/null \
+            || echo unknown
+    )"
+    if [ "$missing_annotations" != "0" ]; then
+        echo "errore: annotazioni ostree.components mancanti ($missing_annotations layer): il piano dei layer non sarà riutilizzabile" >&2
+        exit 1
+    fi
+else
+    echo "attenzione: skopeo assente, non verifico le annotazioni ostree.components" >&2
+fi
 
 echo "OK: $REPO:$TAG, :latest, :$TAG-$DATE, :$TAG-$SHA"
 echo "digest: $digest"

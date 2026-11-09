@@ -21,8 +21,11 @@
 #                            docker://ghcr.io/org/image:45) used with
 #                            --previous-build to keep the layer plan stable
 #                            across builds. Must point to a previously chunked
-#                            build (label org.bootc-fedora.rechunked=1); skipped
-#                            otherwise or when skopeo is unavailable.
+#                            build: here the label org.bootc-fedora.rechunked=1
+#                            is the quick check, while build-chunked-oci also
+#                            requires the ostree.components annotation on every
+#                            layer (the push must use --format oci to keep it).
+#                            Skipped otherwise or when skopeo is unavailable.
 #   RECHUNK_MAX_LAYERS       default 127
 #   RECHUNK_FORMAT_VERSION   default 2
 set -euo pipefail
@@ -150,6 +153,30 @@ for label in "${required_labels[@]}"; do
         "$IMAGE:$TARGET_TAG" 2>/dev/null || true)"
     [ -n "$value" ] || die "label mancante nell'immagine rechunkata: $label"
 done
+
+# `build-chunked-oci --previous-build` riusa il piano dei layer solo se ogni
+# layer (tranne il primo, quello dei metadati ostree) porta l'annotazione
+# `ostree.components`. Il push deve conservarla (`podman push --format oci`):
+# senza, la build successiva ricalcola il piano da zero e gli upgrade tornano
+# da ~1 GB. Verifichiamola qui, prima del push.
+if command -v skopeo >/dev/null 2>&1; then
+    missing_annotations="$(
+        skopeo inspect --raw "containers-storage:$IMAGE:$TARGET_TAG" 2>/dev/null \
+            | python3 -c 'import json,sys; layers=json.load(sys.stdin).get("layers",[]); print(sum(1 for layer in layers[1:] if "ostree.components" not in (layer.get("annotations") or {})))' 2>/dev/null \
+            || echo unknown
+    )"
+    case "$missing_annotations" in
+        0) ;;
+        unknown)
+            echo "rechunk: impossibile verificare le annotazioni ostree.components" >&2
+            ;;
+        *)
+            die "$missing_annotations layer senza annotazione ostree.components: il piano dei layer non sarebbe riutilizzabile"
+            ;;
+    esac
+else
+    echo "rechunk: skopeo assente, salto il controllo delle annotazioni ostree.components" >&2
+fi
 
 layers="$(podman image inspect --format '{{len .RootFS.Layers}}' "$IMAGE:$TARGET_TAG")"
 echo "rechunk: immagine pronta ($layers layer)"
