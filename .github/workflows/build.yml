@@ -183,18 +183,14 @@ jobs:
           PREVIOUS_BUILD="docker://$IMAGE:$VERSION" \
             scripts/rechunk.sh "$IMAGE" "$VERSION-build" "$VERSION"
 
-      # Il layout OCI è la sorgente del push; l'import in containers-storage
-      # serve solo a `make smoke` e al conteggio dei layer nel summary.
-      - name: Import rechunked image
+      # Il layout OCI è la sorgente del push e dello smoke test: si evita
+      # containers-storage, che sul runner non è raggiungibile da skopeo.
+      - name: Smoke test image
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
           RECHUNK_OCI_DIR: ${{ runner.temp }}/rechunked
         run: |
           set -euo pipefail
-          skopeo copy "oci:$RECHUNK_OCI_DIR:$VERSION" "containers-storage:$IMAGE:$VERSION"
-
-      - name: Smoke test image
-        run: make smoke IMAGE="$IMAGE" TAG="${{ steps.ver.outputs.version }}"
+          make smoke IMAGE="oci:$RECHUNK_OCI_DIR" TAG="${{ steps.ver.outputs.version }}"
 
       # Tag: `45` e `latest` sono i canali mutabili (quello che segue
       # `bootc upgrade`); `45-YYYYMMDD` e `45-<sha>` sono riferimenti comodi ma
@@ -302,13 +298,10 @@ jobs:
           BASE_DIGEST: ${{ steps.base.outputs.digest }}
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          layers=$(podman image inspect --format '{{len .RootFS.Layers}}' "$IMAGE:$VERSION")
-          annotated=$(skopeo inspect --raw "docker://$IMAGE@$DIGEST" | python3 -c '
-          import json
-          import sys
-          layers = json.load(sys.stdin).get("layers", [])
-          print(sum(1 for layer in layers if "ostree.components" in (layer.get("annotations") or {})))
-          ')
+          set -euo pipefail
+          manifest=$(skopeo inspect --raw "docker://$IMAGE@$DIGEST")
+          layers=$(printf '%s' "$manifest" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("layers",[])))')
+          annotated=$(printf '%s' "$manifest" | python3 -c 'import json,sys; ls=json.load(sys.stdin).get("layers",[]); print(sum(1 for l in ls if "ostree.components" in (l.get("annotations") or {})))')
           {
             echo "### bootc-fedora $VERSION"
             echo
