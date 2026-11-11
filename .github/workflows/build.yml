@@ -16,6 +16,11 @@ name: build
 #   --enforce-container-sigpolicy`): richiede una firma con chiave, che qui non
 #   è configurata. La firma keyless c'è già.
 
+# paths-ignore elenca solo file che non finiscono nell'immagine. `.github/**`
+# non va ignorato: un push o una PR che tocca solo la CI non avviava nessuna
+# run, quindi un fix al workflow veniva pubblicato senza essere mai eseguito
+# (è successo con il passaggio allo smoke test sul layout OCI). Resta fuori
+# `.github/dependabot.yml`, che non ha effetto sulla build.
 on:
   push:
     branches: [main]
@@ -26,7 +31,7 @@ on:
       - 'Makefile'
       - 'scripts/push.sh'
       - 'iso/**'
-      - '.github/**'
+      - '.github/dependabot.yml'
   pull_request:
     paths-ignore:
       - 'README.md'
@@ -35,7 +40,7 @@ on:
       - 'Makefile'
       - 'scripts/push.sh'
       - 'iso/**'
-      - '.github/**'
+      - '.github/dependabot.yml'
   # Rebuild giornaliero. Serve perché `bootc upgrade` sulla target scarica
   # l'immagine puntata dal tag: senza una ricostruzione periodica, gli RPM
   # aggiornati nei repo (kernel a parte, che viene dalla base) non arrivano mai
